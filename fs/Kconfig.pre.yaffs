@@ -107,15 +107,6 @@ menu "Pseudo filesystems"
 source "fs/proc/Kconfig"
 source "fs/sysfs/Kconfig"
 
-config DEVFS_FS
-	bool "/dev file system support (OBSOLETE)"
-	default y  
-
-config DEVFS_MOUNT
-	bool "Automatically mount at boot"
-	default y
-	depends on DEVFS_FS
-
 config TMPFS
 	bool "Virtual memory file system support (former shm fs)"
 	depends on SHMEM
@@ -183,10 +174,6 @@ source "fs/hfsplus/Kconfig"
 source "fs/befs/Kconfig"
 source "fs/bfs/Kconfig"
 source "fs/efs/Kconfig"
-
-# Patched by YAFFS
-source "fs/yaffs2/Kconfig"
-
 source "fs/jffs2/Kconfig"
 # UBIFS File system configuration
 source "fs/ubifs/Kconfig"

@@ -110,44 +110,29 @@ static struct platform_device smdk_led7 = {
 
 static struct mtd_partition smdk_default_nand_part[] = {
 	[0] = {
-		.name	= "Boot Agent",
-		.size	= SZ_16K,
+		.name	= "UBOOT",
+		.size	= 0x50000,
 		.offset	= 0,
 	},
 	[1] = {
-		.name	= "S3C2410 flash partition 1",
-		.offset = 0,
-		.size	= SZ_2M,
+		.name	= "UBOOT-param",
+		.offset = 0x50000,
+		.size	= 0x20000,
 	},
 	[2] = {
-		.name	= "S3C2410 flash partition 2",
-		.offset = SZ_4M,
-		.size	= SZ_4M,
+		.name	= "Kernel-2.6.35",
+		.offset = 0x70000,
+		.size	= 0x280000,
 	},
 	[3] = {
-		.name	= "S3C2410 flash partition 3",
-		.offset	= SZ_8M,
-		.size	= SZ_2M,
+		.name	= "rootfs.yaffs2",
+		.offset	= 0x2f0000,
+		.size	= 0x1e00000,
 	},
 	[4] = {
-		.name	= "S3C2410 flash partition 4",
-		.offset = SZ_1M * 10,
-		.size	= SZ_4M,
-	},
-	[5] = {
-		.name	= "S3C2410 flash partition 5",
-		.offset	= SZ_1M * 14,
-		.size	= SZ_1M * 10,
-	},
-	[6] = {
-		.name	= "S3C2410 flash partition 6",
-		.offset	= SZ_1M * 24,
-		.size	= SZ_1M * 24,
-	},
-	[7] = {
-		.name	= "S3C2410 flash partition 7",
-		.offset = SZ_1M * 48,
-		.size	= SZ_16M,
+		.name	= "user store",
+		.offset = 0x20f0000,
+		.size	= 0x1f10000,
 	}
 };
 
@@ -165,9 +150,9 @@ static struct s3c2410_nand_set smdk_nand_sets[] = {
 */
 
 static struct s3c2410_platform_nand smdk_nand_info = {
-	.tacls		= 20,
-	.twrph0		= 60,
-	.twrph1		= 20,
+	.tacls		= 0,
+	.twrph0		= 40,
+	.twrph1		= 0,
 	.nr_sets	= ARRAY_SIZE(smdk_nand_sets),
 	.sets		= smdk_nand_sets,
 };
