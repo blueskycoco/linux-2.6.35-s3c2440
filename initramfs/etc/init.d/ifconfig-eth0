@@ -1,0 +1,26 @@
+#!/bin/sh
+
+echo -n Try to bring eth0 interface up......>/dev/ttySAC0
+
+if [ -f /etc/net.conf ] ; then
+	source /etc/net.conf
+
+	if grep -q "^/dev/root / nfs " /etc/mtab ; then
+		echo -n NFS root ... > /dev/ttySAC0
+	else
+		ifconfig eth0 down
+		ifconfig eth0 hw ether $MAC
+		ifconfig eth0 $IPADDR netmask $NETMASK up
+		route add default gw $GATEWAY
+	fi
+
+else
+
+	if grep -q "^/dev/root / nfs " /etc/mtab ; then
+		echo -n NFS root ... > /dev/ttySAC0
+	else
+	/sbin/ifconfig eth0 192.168.1.230 netmask 255.255.255.0 up
+	fi
+fi
+
+echo Done > /dev/ttySAC0
