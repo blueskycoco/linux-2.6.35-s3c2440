@@ -73,7 +73,6 @@ static int s3c24xx_spi_open(struct inode *inode, struct file *file)
 {
 	unsigned m = iminor(inode);
 	//file->private_data = &s3c24xx_spi_ops;
-
 	if (m >= MAX_PINS)
 		return -EINVAL;
 	return nonseekable_open(inode, file);
@@ -106,7 +105,8 @@ static ssize_t s3c24xx_spi_read(struct file *file, char __user *buf,
 			else
 				copy_len=count;
 		}
-		
+		read=copy_len;
+		printk("can read %d bytes\n",copy_len);
 		
         remaining = copy_to_user(buf, g_buf, copy_len);
         if (remaining)
@@ -201,20 +201,20 @@ static irqreturn_t s3c24xx_spi_irq(int irq, void *dev)
 	//}
 	if ((spsta & S3C2410_SPSTA_READY)) 
 	{
-	if(w_len==1023)
-	{
-		w_len=0;
+		if(w_len==1023)
+		{
+			w_len=0;
+		}
+		g_buf[w_len++]=readb(regs + S3C2410_SPRDAT);
+		///printk(" %x",g_buf[w_len-1]);
+		//if((w_len%64)==0)
+		//printk("\n");
+		got_event = 1;
+		wake_up(&wq);
 	}
-	g_buf[w_len++]=readb(regs + S3C2410_SPRDAT);
-	printk(" %x",g_buf[w_len-1]);
-	if((w_len%64)==0)
-	printk("\n");
-	//got_event = 1;
-	//wake_up(&wq);
-	}
-	spin_unlock_irqrestore(&event_lock, flags);
 
  irq_done:
+	spin_unlock_irqrestore(&event_lock, flags);
 	return IRQ_HANDLED;
 }
 

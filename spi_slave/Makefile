@@ -1,4 +1,4 @@
-CROSS_COMPILE=arm-linux-
+CROSS_COMPILE=/opt/Stone/usr/local/arm/3.4.1/bin/arm-linux-
 ARCH:=arm
 CC:=$(CROSS_COMPILE)gcc
 LD:=$(CROSS_COMPILE)ld
