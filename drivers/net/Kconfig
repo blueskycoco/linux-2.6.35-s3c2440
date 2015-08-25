@@ -231,6 +231,15 @@ config MACB
 	  will be called macb.
 
 source "drivers/net/arm/Kconfig"
+config ARM_CS8900
+	tristate "CS8900 support"
+	depends on ARM
+	help
+		Support for CS8900A chipset based Ethernet cards. If you have a
+		network (Ethernet) card of this type, say Y and read the
+		Ethernet-HOWTO, available from as well as .
+		To compile this driver as a module, choose M here and read
+		.  The module will be called
 
 config AX88796
 	tristate "ASIX AX88796 NE2000 clone support"

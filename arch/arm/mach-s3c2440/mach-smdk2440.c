@@ -44,7 +44,7 @@
 #include <plat/clock.h>
 #include <plat/devs.h>
 #include <plat/cpu.h>
-
+#include <net/smdk2410.h>
 #include <plat/common-smdk.h>
 
 static struct map_desc smdk2440_iodesc[] __initdata = {
@@ -70,7 +70,12 @@ static struct map_desc smdk2440_iodesc[] __initdata = {
 		.pfn		= __phys_to_pfn(S3C2410_CS2 + (1<<24)),
 		.length		= SZ_4M,
 		.type		= MT_DEVICE,
-	}
+	},{
+		.virtual = vSMDK2410_ETH_IO, 
+		.pfn = pSMDK2410_ETH_IO, 
+		.length = SZ_1M, 
+		.type = MT_DEVICE,
+		}
 };
 
 #define UCON S3C2410_UCON_DEFAULT | S3C2410_UCON_UCLK

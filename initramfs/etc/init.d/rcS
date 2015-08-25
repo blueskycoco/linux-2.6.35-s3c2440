@@ -14,7 +14,7 @@ trap ":" INT QUIT TSTP
 
 /bin/mount -n -t proc none /proc
 /bin/mount -n -t sysfs none /sys
-/bin/mount -n -t usbfs none /proc/bus/usb
+#/bin/mount -n -t usbfs none /proc/bus/usb
 /bin/mount -t ramfs none /dev
 
 echo /sbin/mdev > /proc/sys/kernel/hotplug

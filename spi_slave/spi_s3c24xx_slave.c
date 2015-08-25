@@ -12,6 +12,7 @@
 #include <linux/kernel.h>
 #include <linux/slab.h>
 #include <linux/init.h>
+#include <linux/clk.h>
 #include <linux/spinlock.h>
 #include <linux/workqueue.h>
 #include <linux/sched.h>
@@ -27,6 +28,8 @@
 
 #include <linux/types.h>
 #include <linux/cdev.h>
+void __iomem		*regs;
+struct clk		*clk;
 static irqreturn_t s3c24xx_spi_irq(int irq, void *dev);
 
 static DEFINE_MUTEX(tlclk_mutex);
@@ -192,18 +195,23 @@ static irqreturn_t s3c24xx_spi_irq(int irq, void *dev)
 		goto irq_done;
 	}
 
-	if (!(spsta & S3C2410_SPSTA_READY)) {
-		printk("spi not ready for tx?\n");
-		goto irq_done;
-	}
+	//if (!(spsta & S3C2410_SPSTA_READY)) {
+	//	printk("spi not ready for tx?\n");
+	//	goto irq_done;
+	//}
+	if ((spsta & S3C2410_SPSTA_READY)) 
+	{
 	if(w_len==1023)
 	{
 		w_len=0;
 	}
 	g_buf[w_len++]=readb(regs + S3C2410_SPRDAT);
-	printk("Got %x\n",g_buf[w_len-1]);
-	got_event = 1;
-	wake_up(&wq);
+	printk(" %x",g_buf[w_len-1]);
+	if((w_len%64)==0)
+	printk("\n");
+	//got_event = 1;
+	//wake_up(&wq);
+	}
 	spin_unlock_irqrestore(&event_lock, flags);
 
  irq_done:
@@ -216,30 +224,7 @@ static int __init s3c24xx_spi_init(void)
 	int err = 0;
 	dev_t devid;
 	struct resource 	*ioarea;
-	void __iomem		*regs;
-	g_buf=kmalloc(1024*sizeof(unsigned char),GFP_KERNEL);
-	memset(g_buf,0,1024);
 	
-	ioarea = request_mem_region(s3c2440_spi1_resource[0].start, resource_size(&s3c2440_spi1_resource[0]),DRVNAME);
-	if (ioarea == NULL) {
-		printk("Cannot reserve region\n");
-		return 0;
-	}
-	regs = ioremap(s3c2440_spi1_resource[0].start, resource_size(&s3c2440_spi1_resource[0]));
-	if (regs == NULL) {
-		printk("Cannot map IO\n");
-		return 1;
-	}
-	writeb(0x00,regs+S3C2410_SPPRE);
-	//writeb((S3C2410_SPCON_SMOD_DMA|S3C2410_SPCON_CPOL_HIGH|S3C2410_SPCON_TAGD),regs+S3C2410_SPCON);
-	writeb((S3C2410_SPCON_SMOD_INT|S3C2410_SPCON_CPOL_HIGH),regs+S3C2410_SPCON);
-	writeb(S3C2410_SPPIN_RESERVED,regs+S3C2410_SPPIN);
-	my_s3c24xx_spi_gpiocfg_bus1_gpg5_6_7(1);
-	err = request_irq(IRQ_SPI1, (void *)s3c24xx_spi_irq, 0, DRVNAME, (void *)regs);
-	if (err) {
-		printk("Cannot claim IRQ\n");
-		return 2;
-	}
 #if 0
 	acquire_dma(s3c2440_spi1_resource[1]->start);
 	if (rx_buf != NULL) 
@@ -264,7 +249,43 @@ static int __init s3c24xx_spi_init(void)
 	rc = platform_device_add(pdev);
 	if (rc)
 		goto undo_malloc;
-
+		
+	clk = clk_get(&pdev->dev, "spi");
+	if (IS_ERR(clk)) {
+		printk("No clock for device\n");
+		return 2;
+	}
+g_buf=kmalloc(1024*sizeof(unsigned char),GFP_KERNEL);
+	memset(g_buf,0,1024);
+	
+	ioarea = request_mem_region(s3c2440_spi1_resource[0].start, resource_size(&s3c2440_spi1_resource[0]),DRVNAME);
+	if (ioarea == NULL) {
+		printk("Cannot reserve region\n");
+		return 0;
+	}
+	printk("ioarea %x\n",ioarea);
+	regs = ioremap(s3c2440_spi1_resource[0].start, resource_size(&s3c2440_spi1_resource[0]));
+	if (regs == NULL) {
+		printk("Cannot map IO\n");
+		return 1;
+	}
+	clk_enable(clk);
+	printk("regs %x\n",readb(regs+S3C2410_SPPRE));
+	writeb(0x00,regs+S3C2410_SPPRE);
+	printk("regs2 %x\n",readb(regs+S3C2410_SPPRE));
+	printk("sta %x\n",readb(regs+S3C2410_SPSTA));
+	printk("con %x\n",readb(regs+S3C2410_SPCON));
+	//writeb((S3C2410_SPCON_SMOD_DMA|S3C2410_SPCON_CPOL_HIGH|S3C2410_SPCON_TAGD),regs+S3C2410_SPCON);
+	writeb((S3C2410_SPCON_SMOD_INT|S3C2410_SPCON_CPOL_LOW|S3C2410_SPCON_CPHA_FMTB),regs+S3C2410_SPCON);
+	printk("con2 %x\n",readb(regs+S3C2410_SPCON));
+	writeb(S3C2410_SPPIN_RESERVED,regs+S3C2410_SPPIN);
+	my_s3c24xx_spi_gpiocfg_bus1_gpg5_6_7(1);
+	err = request_irq(IRQ_SPI1, (void *)s3c24xx_spi_irq, 0, DRVNAME, (void *)regs);
+	if (err) {
+		printk("Cannot claim IRQ\n");
+		return 2;
+	}
+	printk("request spi irq done.\n");
 	/* nsc_gpio uses dev_dbg(), so needs this */
 	//s3c24xx_spi_ops.dev = &pdev->dev;
 
@@ -295,6 +316,9 @@ undo_malloc:
 
 static void __exit s3c24xx_spi_cleanup(void)
 {
+	free_irq(IRQ_SPI1, regs);
+	iounmap((void *) regs);
+	release_mem_region(s3c2440_spi1_resource[0].start, resource_size(&s3c2440_spi1_resource[0]));
 	cdev_del(&s3c24xx_spi_cdev);
 	/* cdev_put(&s3c24xx_spi_cdev); */
 
