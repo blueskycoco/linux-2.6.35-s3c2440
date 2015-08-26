@@ -196,13 +196,14 @@ static irqreturn_t s3c24xx_spi_irq(int irq, void *dev)
 	}
 	if ((spsta & S3C2410_SPSTA_READY)) 
 	{		
-		while(readb(regs + S3C2410_SPSTA)&S3C2410_SPSTA_READY)
+		while(spsta & S3C2410_SPSTA_READY)
 		{
 			if(w_len==1023)
 			{
 				w_len=0;
 			}
 			g_buf[w_len++]=readb(regs + S3C2410_SPRDAT);
+			spsta = readb(regs + S3C2410_SPSTA);
 		}
 		got_event = 1;
 		wake_up(&wq);
@@ -258,7 +259,6 @@ static int __init s3c24xx_spi_init(void)
 		printk("Cannot claim IRQ\n");
 		return 2;
 	}
-	printk("request spi irq done.\n");
 #else	
 	acquire_dma(s3c2440_spi1_resource[1].start);
 		rx_dma = dma_map_single(pdev->dev, g_buf,1024, DMA_FROM_DEVICE);
