@@ -28,6 +28,7 @@
 
 #include <linux/types.h>
 #include <linux/cdev.h>
+#define INT_OP 1
 void __iomem		*regs;
 struct clk		*clk;
 static irqreturn_t s3c24xx_spi_irq(int irq, void *dev);
@@ -83,46 +84,46 @@ static int s3c24xx_spi_release(struct inode *inode, struct file *file)
 	return 0;
 }
 static ssize_t s3c24xx_spi_read(struct file *file, char __user *buf,
-                        size_t count, loff_t *ppos)
+		size_t count, loff_t *ppos)
 {
-        ssize_t read=0;
-		int copy_len=0;
-        unsigned long remaining;
-		if (mutex_lock_interruptible(&tlclk_mutex))
-				return -EINTR;		
-		wait_event_interruptible(wq, got_event);
-		if(w_len>r_len)
-		{
-			if(count>(w_len-r_len))
-				copy_len=w_len-r_len;
-			else
-				copy_len=count;
-		}
+	ssize_t read=0;
+	int copy_len=0;
+	unsigned long remaining;
+	if (mutex_lock_interruptible(&tlclk_mutex))
+		return -EINTR;		
+	wait_event_interruptible(wq, got_event);
+	if(w_len>r_len)
+	{
+		if(count>(w_len-r_len))
+			copy_len=w_len-r_len;
 		else
-		{
-				if(count>(1024+w_len-r_len))
-				copy_len=1024+w_len-r_len;
-			else
-				copy_len=count;
-		}
-		read=copy_len;
-		printk("can read %d bytes\n",copy_len);
-		
-        remaining = copy_to_user(buf, g_buf, copy_len);
-        if (remaining)
-        {
-        	mutex_unlock(&tlclk_mutex);
-        	return -EFAULT;
-        }
+			copy_len=count;
+	}
+	else
+	{
+		if(count>(1024+w_len-r_len))
+			copy_len=1024+w_len-r_len;
+		else
+			copy_len=count;
+	}
+	read=copy_len;
+	printk("can read %d bytes\n",copy_len);
 
-        *ppos += copy_len;
-		got_event = 0;
-		if((r_len+copy_len)<1024)
-			r_len=r_len+copy_len;
-		else
-			r_len=r_len+copy_len-1024;
+	remaining = copy_to_user(buf, g_buf, copy_len);
+	got_event = 0;
+	if (remaining)
+	{
 		mutex_unlock(&tlclk_mutex);
-		return read;
+		return -EFAULT;
+	}
+
+	*ppos += copy_len;
+	if((r_len+copy_len)<1024)
+		r_len=r_len+copy_len;
+	else
+		r_len=r_len+copy_len-1024;
+	mutex_unlock(&tlclk_mutex);
+	return read;
 }
 
 static const struct file_operations s3c24xx_spi_fileops = {
@@ -135,23 +136,23 @@ static const struct file_operations s3c24xx_spi_fileops = {
 static struct cdev s3c24xx_spi_cdev;  /* use 1 cdev for all pins */
 
 static struct resource s3c2440_spi1_resource[] = {
-		[0] = {
-			.start = S3C24XX_PA_SPI+S3C2410_SPI1,
-			.end   = S3C24XX_PA_SPI+S3C2410_SPI1 + S3C24XX_SZ_SPI -1,
-			.flags = IORESOURCE_MEM
-			  },		
-		[1] = {
-			.start = DMACH_SPI1_RX,
-			.end   = DMACH_SPI1_RX,
-			.flags = IORESOURCE_DMA,
-		},
+	[0] = {
+		.start = S3C24XX_PA_SPI+S3C2410_SPI1,
+		.end   = S3C24XX_PA_SPI+S3C2410_SPI1 + S3C24XX_SZ_SPI -1,
+		.flags = IORESOURCE_MEM
+	},		
+	[1] = {
+		.start = DMACH_SPI1_RX,
+		.end   = DMACH_SPI1_RX,
+		.flags = IORESOURCE_DMA,
+	},
 };
-#if 0
+#if !INT_OP
 static struct s3c2410_dma_client s3c24xx_spi_dma_client = {
 	.name = "samsung-spi-dma",
 };
 static void s3c24xx_spi_dma_rxcb(struct s3c2410_dma_chan *chan, void *buf_id,
-				 int size, enum s3c2410_dma_buffresult res)
+		int size, enum s3c2410_dma_buffresult res)
 {
 	struct s3c64xx_spi_driver_data *sdd = buf_id;
 	unsigned long flags;
@@ -173,7 +174,7 @@ static void s3c24xx_spi_dma_rxcb(struct s3c2410_dma_chan *chan, void *buf_id,
 static int acquire_dma(int rx_dmach)
 {
 	if (s3c2410_dma_request(rx_dmach,
-					&s3c24xx_spi_dma_client, NULL) < 0) {
+				&s3c24xx_spi_dma_client, NULL) < 0) {
 		printk("cannot get RxDMA\n");
 		return 0;
 	}
@@ -181,66 +182,46 @@ static int acquire_dma(int rx_dmach)
 	s3c2410_dma_devconfig(rx_dmach, S3C2410_DMASRC_HW,s3c2440_spi1_resource[0]->start + S3C2410_SPRDAT);
 	return 1;
 }
-#endif
+#else
 static irqreturn_t s3c24xx_spi_irq(int irq, void *dev)
 {
 	void __iomem	*regs = dev;
 	unsigned long flags;
 	unsigned char spsta = readb(regs + S3C2410_SPSTA);
 	spin_lock_irqsave(&event_lock, flags);
-//	unsigned int count = hw->count;
 
 	if (spsta & S3C2410_SPSTA_DCOL) {
 		printk("data-collision\n");
 		goto irq_done;
 	}
-
-	//if (!(spsta & S3C2410_SPSTA_READY)) {
-	//	printk("spi not ready for tx?\n");
-	//	goto irq_done;
-	//}
 	if ((spsta & S3C2410_SPSTA_READY)) 
-	{
-		if(w_len==1023)
+	{		
+		while(readb(regs + S3C2410_SPSTA)&S3C2410_SPSTA_READY)
 		{
-			w_len=0;
+			if(w_len==1023)
+			{
+				w_len=0;
+			}
+			g_buf[w_len++]=readb(regs + S3C2410_SPRDAT);
 		}
-		g_buf[w_len++]=readb(regs + S3C2410_SPRDAT);
-		///printk(" %x",g_buf[w_len-1]);
-		//if((w_len%64)==0)
-		//printk("\n");
 		got_event = 1;
 		wake_up(&wq);
 	}
 
- irq_done:
+irq_done:
 	spin_unlock_irqrestore(&event_lock, flags);
 	return IRQ_HANDLED;
 }
-
+#endif
 static int __init s3c24xx_spi_init(void)
 {
 	int rc;
 	int err = 0;
 	dev_t devid;
+	void *rx_buf;
+	dma_addr_t		rx_dma;
 	struct resource 	*ioarea;
-	
-#if 0
-	acquire_dma(s3c2440_spi1_resource[1]->start);
-	if (rx_buf != NULL) 
-	{
-		xfer->rx_dma = dma_map_single(dev, xfer->rx_buf,
-					xfer->len, DMA_FROM_DEVICE);
-		if (dma_mapping_error(dev, xfer->rx_dma)) {
-			dev_err(dev, "dma_map_single Rx failed\n");
-			dma_unmap_single(dev, xfer->tx_dma,
-					xfer->len, DMA_TO_DEVICE);
-			xfer->tx_dma = XFER_DMAADDR_INVALID;
-			xfer->rx_dma = XFER_DMAADDR_INVALID;
-			return -ENOMEM;
-		}
-	}
-#endif
+
 	/* support dev_dbg() with pdev->dev */
 	pdev = platform_device_alloc(DRVNAME, 0);
 	if (!pdev)
@@ -249,46 +230,52 @@ static int __init s3c24xx_spi_init(void)
 	rc = platform_device_add(pdev);
 	if (rc)
 		goto undo_malloc;
-		
+
 	clk = clk_get(&pdev->dev, "spi");
 	if (IS_ERR(clk)) {
 		printk("No clock for device\n");
 		return 2;
 	}
-g_buf=kmalloc(1024*sizeof(unsigned char),GFP_KERNEL);
+	g_buf=kmalloc(1024*sizeof(unsigned char),GFP_KERNEL);
 	memset(g_buf,0,1024);
-	
+
 	ioarea = request_mem_region(s3c2440_spi1_resource[0].start, resource_size(&s3c2440_spi1_resource[0]),DRVNAME);
 	if (ioarea == NULL) {
 		printk("Cannot reserve region\n");
 		return 0;
 	}
-	printk("ioarea %x\n",ioarea);
 	regs = ioremap(s3c2440_spi1_resource[0].start, resource_size(&s3c2440_spi1_resource[0]));
 	if (regs == NULL) {
 		printk("Cannot map IO\n");
 		return 1;
 	}
 	clk_enable(clk);
-	printk("regs %x\n",readb(regs+S3C2410_SPPRE));
 	writeb(0x00,regs+S3C2410_SPPRE);
-	printk("regs2 %x\n",readb(regs+S3C2410_SPPRE));
-	printk("sta %x\n",readb(regs+S3C2410_SPSTA));
-	printk("con %x\n",readb(regs+S3C2410_SPCON));
-	//writeb((S3C2410_SPCON_SMOD_DMA|S3C2410_SPCON_CPOL_HIGH|S3C2410_SPCON_TAGD),regs+S3C2410_SPCON);
+#if INT_OP
 	writeb((S3C2410_SPCON_SMOD_INT|S3C2410_SPCON_CPOL_LOW|S3C2410_SPCON_CPHA_FMTB),regs+S3C2410_SPCON);
-	printk("con2 %x\n",readb(regs+S3C2410_SPCON));
-	writeb(S3C2410_SPPIN_RESERVED,regs+S3C2410_SPPIN);
-	my_s3c24xx_spi_gpiocfg_bus1_gpg5_6_7(1);
 	err = request_irq(IRQ_SPI1, (void *)s3c24xx_spi_irq, 0, DRVNAME, (void *)regs);
 	if (err) {
 		printk("Cannot claim IRQ\n");
 		return 2;
 	}
 	printk("request spi irq done.\n");
-	/* nsc_gpio uses dev_dbg(), so needs this */
+#else	
+	acquire_dma(s3c2440_spi1_resource[1].start);
+		rx_dma = dma_map_single(pdev->dev, g_buf,1024, DMA_FROM_DEVICE);
+		if (dma_mapping_error(dev, xfer->rx_dma)) {
+			dev_err(dev, "dma_map_single Rx failed\n");
+			dma_unmap_single(dev, xfer->tx_dma,
+					xfer->len, DMA_TO_DEVICE);
+			xfer->tx_dma = XFER_DMAADDR_INVALID;
+			xfer->rx_dma = XFER_DMAADDR_INVALID;
+			return -ENOMEM;
+	}
+	writeb((S3C2410_SPCON_SMOD_DMA|S3C2410_SPCON_CPOL_HIGH|S3C2410_SPCON_TAGD),regs+S3C2410_SPCON);
+#endif
+	writeb(S3C2410_SPPIN_RESERVED,regs+S3C2410_SPPIN);
+	my_s3c24xx_spi_gpiocfg_bus1_gpg5_6_7(1);
+	
 	//s3c24xx_spi_ops.dev = &pdev->dev;
-
 	if (major) {
 		devid = MKDEV(major, 0);
 		rc = register_chrdev_region(devid, MAX_PINS, "s3c24xx_spi");
