@@ -22,17 +22,19 @@
 #include <asm/io.h>
 #include <linux/gpio.h>
 #include <mach/spi.h>
+#include <mach/dma.h>
 #include <mach/regs-gpio.h>
 #include <plat/regs-spi.h>
-#include <plat/s3c-dma-pl330.h>
-
+#include <linux/dma-mapping.h>
 #include <linux/types.h>
 #include <linux/cdev.h>
 #define INT_OP 1
+#define XFER_DMAADDR_INVALID DMA_BIT_MASK(32)
 void __iomem		*regs;
 struct clk		*clk;
+#if INT_OP
 static irqreturn_t s3c24xx_spi_irq(int irq, void *dev);
-
+#endif
 static DEFINE_MUTEX(tlclk_mutex);
 static DECLARE_WAIT_QUEUE_HEAD(wq);
 static DEFINE_SPINLOCK(event_lock);
@@ -142,8 +144,8 @@ static struct resource s3c2440_spi1_resource[] = {
 		.flags = IORESOURCE_MEM
 	},		
 	[1] = {
-		.start = DMACH_SPI1_RX,
-		.end   = DMACH_SPI1_RX,
+		.start = DMACH_SPI1,
+		.end   = DMACH_SPI1,
 		.flags = IORESOURCE_DMA,
 	},
 };
@@ -154,24 +156,28 @@ static struct s3c2410_dma_client s3c24xx_spi_dma_client = {
 static void s3c24xx_spi_dma_rxcb(struct s3c2410_dma_chan *chan, void *buf_id,
 		int size, enum s3c2410_dma_buffresult res)
 {
-	struct s3c64xx_spi_driver_data *sdd = buf_id;
+	//void __iomem *regs = buf_id;
 	unsigned long flags;
 
-	spin_lock_irqsave(&sdd->lock, flags);
+	spin_lock_irqsave(&event_lock, flags);
 
 	if (res == S3C2410_RES_OK)
-		sdd->state &= ~RXBUSY;
+	{
+		//sdd->state &= ~RXBUSY;
+		//info read process
+		got_event = 1;
+		wake_up(&wq);
+	}
 	else
-		dev_err(&sdd->pdev->dev, "DmaAbrtRx-%d\n", size);
-
-	/* If the other done */
-	if (!(sdd->state & TXBUSY))
-		complete(&sdd->xfer_completion);
-
-	spin_unlock_irqrestore(&sdd->lock, flags);
+	{
+		printk("DmaAbrtRx-%d\n", size);
+		s3c2410_dma_ctrl(DMACH_SPI1,S3C2410_DMAOP_FLUSH);
+	}
+	
+	spin_unlock_irqrestore(&event_lock, flags);
 }
 
-static int acquire_dma(int rx_dmach)
+static int acquire_dma(unsigned int rx_dmach,unsigned long reg)
 {
 	if (s3c2410_dma_request(rx_dmach,
 				&s3c24xx_spi_dma_client, NULL) < 0) {
@@ -179,7 +185,7 @@ static int acquire_dma(int rx_dmach)
 		return 0;
 	}
 	s3c2410_dma_set_buffdone_fn(rx_dmach, s3c24xx_spi_dma_rxcb);
-	s3c2410_dma_devconfig(rx_dmach, S3C2410_DMASRC_HW,s3c2440_spi1_resource[0]->start + S3C2410_SPRDAT);
+	s3c2410_dma_devconfig(rx_dmach, S3C2410_DMASRC_HW,reg + S3C2410_SPRDAT);
 	return 1;
 }
 #else
@@ -217,10 +223,12 @@ irq_done:
 static int __init s3c24xx_spi_init(void)
 {
 	int rc;
+#if INT_OP
 	int err = 0;
-	dev_t devid;
-	void *rx_buf;
+#else
 	dma_addr_t		rx_dma;
+#endif
+	dev_t devid;
 	struct resource 	*ioarea;
 
 	/* support dev_dbg() with pdev->dev */
@@ -260,17 +268,19 @@ static int __init s3c24xx_spi_init(void)
 		return 2;
 	}
 #else	
-	acquire_dma(s3c2440_spi1_resource[1].start);
-		rx_dma = dma_map_single(pdev->dev, g_buf,1024, DMA_FROM_DEVICE);
-		if (dma_mapping_error(dev, xfer->rx_dma)) {
-			dev_err(dev, "dma_map_single Rx failed\n");
-			dma_unmap_single(dev, xfer->tx_dma,
-					xfer->len, DMA_TO_DEVICE);
-			xfer->tx_dma = XFER_DMAADDR_INVALID;
-			xfer->rx_dma = XFER_DMAADDR_INVALID;
-			return -ENOMEM;
+	acquire_dma(DMACH_SPI1,(unsigned long)regs);
+	rx_dma = dma_map_single(&pdev->dev, g_buf,1024, DMA_FROM_DEVICE);
+	if (dma_mapping_error(&pdev->dev, rx_dma)) {
+		printk("dma_map_single Rx failed\n");
+		rx_dma = XFER_DMAADDR_INVALID;
+		iounmap((void *) regs);
+		release_mem_region(s3c2440_spi1_resource[0].start, resource_size(&s3c2440_spi1_resource[0]));
+		return -ENOMEM;
 	}
 	writeb((S3C2410_SPCON_SMOD_DMA|S3C2410_SPCON_CPOL_HIGH|S3C2410_SPCON_TAGD),regs+S3C2410_SPCON);
+	s3c2410_dma_config(DMACH_SPI1, 32 / 8);
+	s3c2410_dma_enqueue(DMACH_SPI1, (void *)regs,	rx_dma, 1024);
+	s3c2410_dma_ctrl(DMACH_SPI1, S3C2410_DMAOP_START);
 #endif
 	writeb(S3C2410_SPPIN_RESERVED,regs+S3C2410_SPPIN);
 	my_s3c24xx_spi_gpiocfg_bus1_gpg5_6_7(1);
@@ -303,7 +313,12 @@ undo_malloc:
 
 static void __exit s3c24xx_spi_cleanup(void)
 {
+#if INT_OP
 	free_irq(IRQ_SPI1, regs);
+#else
+	s3c2410_dma_free(DMACH_SPI1, &s3c24xx_spi_dma_client);
+#endif
+
 	iounmap((void *) regs);
 	release_mem_region(s3c2440_spi1_resource[0].start, resource_size(&s3c2440_spi1_resource[0]));
 	cdev_del(&s3c24xx_spi_cdev);
