@@ -165,8 +165,10 @@ static void s3c24xx_spi_dma_rxcb(struct s3c2410_dma_chan *chan, void *buf_id,
 	{
 		//sdd->state &= ~RXBUSY;
 		//info read process
+		printk("dma rcv done\n");
 		got_event = 1;
 		wake_up(&wq);
+		//s3c2410_dma_ctrl(DMACH_SPI1, S3C2410_DMAOP_START);
 	}
 	else
 	{
@@ -200,17 +202,16 @@ static irqreturn_t s3c24xx_spi_irq(int irq, void *dev)
 		printk("data-collision\n");
 		goto irq_done;
 	}
-	if ((spsta & S3C2410_SPSTA_READY)) 
+	if (spsta & S3C2410_SPSTA_READY) 
 	{		
-		while(spsta & S3C2410_SPSTA_READY)
-		{
 			if(w_len==1023)
 			{
 				w_len=0;
 			}
 			g_buf[w_len++]=readb(regs + S3C2410_SPRDAT);
-			spsta = readb(regs + S3C2410_SPSTA);
-		}
+			//printk(" %x",g_buf[w_len-1]);
+			//if((w_len%16)==0)
+			//printk("\n");
 		got_event = 1;
 		wake_up(&wq);
 	}
@@ -261,12 +262,12 @@ static int __init s3c24xx_spi_init(void)
 	clk_enable(clk);
 	writeb(0x00,regs+S3C2410_SPPRE);
 #if INT_OP
-	writeb((S3C2410_SPCON_SMOD_INT|S3C2410_SPCON_CPOL_LOW|S3C2410_SPCON_CPHA_FMTB),regs+S3C2410_SPCON);
 	err = request_irq(IRQ_SPI1, (void *)s3c24xx_spi_irq, 0, DRVNAME, (void *)regs);
 	if (err) {
 		printk("Cannot claim IRQ\n");
 		return 2;
 	}
+	writeb((S3C2410_SPCON_SMOD_INT|S3C2410_SPCON_CPOL_HIGH|S3C2410_SPCON_CPHA_FMTB),regs+S3C2410_SPCON);
 #else	
 	acquire_dma(DMACH_SPI1,(unsigned long)regs);
 	rx_dma = dma_map_single(&pdev->dev, g_buf,1024, DMA_FROM_DEVICE);
@@ -277,9 +278,9 @@ static int __init s3c24xx_spi_init(void)
 		release_mem_region(s3c2440_spi1_resource[0].start, resource_size(&s3c2440_spi1_resource[0]));
 		return -ENOMEM;
 	}
-	writeb((S3C2410_SPCON_SMOD_DMA|S3C2410_SPCON_CPOL_HIGH|S3C2410_SPCON_TAGD),regs+S3C2410_SPCON);
+	writeb((S3C2410_SPCON_SMOD_DMA|S3C2410_SPCON_CPOL_LOW|S3C2410_SPCON_CPHA_FMTB),regs+S3C2410_SPCON);
 	s3c2410_dma_config(DMACH_SPI1, 32 / 8);
-	s3c2410_dma_enqueue(DMACH_SPI1, (void *)regs,	rx_dma, 1024);
+	s3c2410_dma_enqueue(DMACH_SPI1, (void *)regs,	rx_dma, 64);
 	s3c2410_dma_ctrl(DMACH_SPI1, S3C2410_DMAOP_START);
 #endif
 	writeb(S3C2410_SPPIN_RESERVED,regs+S3C2410_SPPIN);
