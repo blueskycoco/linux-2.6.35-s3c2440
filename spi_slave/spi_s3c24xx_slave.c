@@ -110,8 +110,12 @@ static ssize_t s3c24xx_spi_read(struct file *file, char __user *buf,
 	}
 	read=copy_len;
 	printk("can read %d bytes\n",copy_len);
-
-	remaining = copy_to_user(buf, g_buf, copy_len);
+	if(r_len+copy_len>1024){
+	remaining = copy_to_user(buf, g_buf+r_len, 1024-r_len);
+	remaining = copy_to_user(buf, g_buf, copy_len+r_len-1024);
+	}
+	else
+	remaining = copy_to_user(buf, g_buf+r_len, copy_len);
 	got_event = 0;
 	if (remaining)
 	{
@@ -175,7 +179,7 @@ static void s3c24xx_spi_dma_rxcb(struct s3c2410_dma_chan *chan, void *buf_id,
 		printk("DmaAbrtRx-%d\n", size);
 		s3c2410_dma_ctrl(DMACH_SPI1,S3C2410_DMAOP_FLUSH);
 	}
-	
+
 	spin_unlock_irqrestore(&event_lock, flags);
 }
 
@@ -204,16 +208,21 @@ static irqreturn_t s3c24xx_spi_irq(int irq, void *dev)
 	}
 	if (spsta & S3C2410_SPSTA_READY) 
 	{		
-			if(w_len==1023)
-			{
-				w_len=0;
-			}
-			g_buf[w_len++]=readb(regs + S3C2410_SPRDAT);
-			//printk(" %x",g_buf[w_len-1]);
-			//if((w_len%16)==0)
-			//printk("\n");
+		//while(spsta & S3C2410_SPSTA_READY){
+		g_buf[w_len++]=readb(regs + S3C2410_SPRDAT);
+		if(w_len==1023)
+		{
+			w_len=0;
+		}
+		//printk(" %x",g_buf[w_len-1]);
+		//if((w_len%16)==0)
+		//	printk("\n");
+		//spsta = readb(regs + S3C2410_SPSTA);
+		//}
+		//if(w_len%64==0){
 		got_event = 1;
-		wake_up(&wq);
+		wake_up(&wq);//}
+		//writeb(0, regs + S3C2410_SPTDAT);
 	}
 
 irq_done:
@@ -262,12 +271,12 @@ static int __init s3c24xx_spi_init(void)
 	clk_enable(clk);
 	writeb(0x00,regs+S3C2410_SPPRE);
 #if INT_OP
+	writeb((S3C2410_SPCON_SMOD_INT|S3C2410_SPCON_CPOL_LOW|S3C2410_SPCON_CPHA_FMTB),regs+S3C2410_SPCON);
 	err = request_irq(IRQ_SPI1, (void *)s3c24xx_spi_irq, 0, DRVNAME, (void *)regs);
 	if (err) {
 		printk("Cannot claim IRQ\n");
 		return 2;
 	}
-	writeb((S3C2410_SPCON_SMOD_INT|S3C2410_SPCON_CPOL_HIGH|S3C2410_SPCON_CPHA_FMTB),regs+S3C2410_SPCON);
 #else	
 	acquire_dma(DMACH_SPI1,(unsigned long)regs);
 	rx_dma = dma_map_single(&pdev->dev, g_buf,1024, DMA_FROM_DEVICE);
@@ -278,14 +287,14 @@ static int __init s3c24xx_spi_init(void)
 		release_mem_region(s3c2440_spi1_resource[0].start, resource_size(&s3c2440_spi1_resource[0]));
 		return -ENOMEM;
 	}
-	writeb((S3C2410_SPCON_SMOD_DMA|S3C2410_SPCON_CPOL_LOW|S3C2410_SPCON_CPHA_FMTB),regs+S3C2410_SPCON);
+	writeb((S3C2410_SPCON_SMOD_DMA|S3C2410_SPCON_CPOL_HIGH|S3C2410_SPCON_CPHA_FMTB),regs+S3C2410_SPCON);
 	s3c2410_dma_config(DMACH_SPI1, 32 / 8);
 	s3c2410_dma_enqueue(DMACH_SPI1, (void *)regs,	rx_dma, 64);
 	s3c2410_dma_ctrl(DMACH_SPI1, S3C2410_DMAOP_START);
 #endif
 	writeb(S3C2410_SPPIN_RESERVED,regs+S3C2410_SPPIN);
 	my_s3c24xx_spi_gpiocfg_bus1_gpg5_6_7(1);
-	
+
 	//s3c24xx_spi_ops.dev = &pdev->dev;
 	if (major) {
 		devid = MKDEV(major, 0);
@@ -321,6 +330,7 @@ static void __exit s3c24xx_spi_cleanup(void)
 #endif
 
 	iounmap((void *) regs);
+	clk_disable(clk);
 	release_mem_region(s3c2440_spi1_resource[0].start, resource_size(&s3c2440_spi1_resource[0]));
 	cdev_del(&s3c24xx_spi_cdev);
 	/* cdev_put(&s3c24xx_spi_cdev); */
