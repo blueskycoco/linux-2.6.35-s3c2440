@@ -19,7 +19,7 @@ int main(int argc,void *argv[])
 		for(i=0;i<len;i++)
 		{
 			printf("%02x ",buf[i]);
-			if(((i+1)%16)==0 && i!=0)
+			if((((i+1)%16)==0 && i!=0)||(buf[i]==255))
 				printf("\n");
 		}
 		printf("\n");
