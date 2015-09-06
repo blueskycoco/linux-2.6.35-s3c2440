@@ -89,22 +89,23 @@ static ssize_t s3c24xx_spi_read(struct file *file, char __user *buf,
 		size_t count, loff_t *ppos)
 {
 	ssize_t read=0;
-	int copy_len=0;
+	int copy_len=0,local_w_len;
 	unsigned long remaining;
 	if (mutex_lock_interruptible(&tlclk_mutex))
 		return -EINTR;		
 	wait_event_interruptible(wq, got_event);
-	if(w_len>r_len)
+	local_w_len=w_len;
+	if(local_w_len>r_len)
 	{
-		if(count>(w_len-r_len))
-			copy_len=w_len-r_len;
+		if(count>(local_w_len-r_len))
+			copy_len=local_w_len-r_len;
 		else
 			copy_len=count;
 	}
 	else
 	{
-		if(count>(1024+w_len-r_len))
-			copy_len=1024+w_len-r_len;
+		if(count>(1024+local_w_len-r_len))
+			copy_len=1024+local_w_len-r_len;
 		else
 			copy_len=count;
 	}
@@ -195,37 +196,237 @@ static int acquire_dma(unsigned int rx_dmach,unsigned long reg)
 	return 1;
 }
 #else
+#ifdef CONFIG_SPI_S3C24XX_FIQ
+#include <plat/fiq.h>
+#include <asm/fiq.h>
+#include "spi_s3c24xx_fiq.h"
+unsigned char		 fiq_claimed;
+struct fiq_handler	 fiq_handler;
+unsigned char		*rx;
+const unsigned char	*tx;
+int			 len;
+
+enum spi_fiq_mode {
+	FIQ_MODE_NONE	= 0,
+	FIQ_MODE_TX	= 1,
+	FIQ_MODE_RX	= 2,
+	FIQ_MODE_TXRX	= 3,
+};
+enum spi_fiq_mode mode;
+/* Support for FIQ based pseudo-DMA to improve the transfer speed.
+ *
+ * This code uses the assembly helper in spi_s3c24xx_spi.S which is
+ * used by the FIQ core to move data between main memory and the peripheral
+ * block. Since this is code running on the processor, there is no problem
+ * with cache coherency of the buffers, so we can use any buffer we like.
+ */
+
+/**
+ * struct spi_fiq_code - FIQ code and header
+ * @length: The length of the code fragment, excluding this header.
+ * @ack_offset: The offset from @data to the word to place the IRQ ACK bit at.
+ * @data: The code itself to install as a FIQ handler.
+ */
+struct spi_fiq_code {
+	u32	length;
+	u32	ack_offset;
+	u8	data[0];
+};
+
+extern struct spi_fiq_code s3c24xx_spi_fiq_txrx;
+extern struct spi_fiq_code s3c24xx_spi_fiq_tx;
+extern struct spi_fiq_code s3c24xx_spi_fiq_rx;
+
+/**
+ * ack_bit - turn IRQ into IRQ acknowledgement bit
+ * @irq: The interrupt number
+ *
+ * Returns the bit to write to the interrupt acknowledge register.
+ */
+static inline u32 ack_bit(unsigned int irq)
+{
+	return 1 << (irq - IRQ_EINT0);
+}
+
+/**
+ * s3c24xx_spi_tryfiq - attempt to claim and setup FIQ for transfer
+ * @hw: The hardware state.
+ *
+ * Claim the FIQ handler (only one can be active at any one time) and
+ * then setup the correct transfer code for this transfer.
+ *
+ * This call updates all the necessary state information if successful,
+ * so the caller does not need to do anything more than start the transfer
+ * as normal, since the IRQ will have been re-routed to the FIQ handler.
+*/
+void s3c24xx_spi_tryfiq(struct s3c24xx_spi *hw)
+{
+	struct pt_regs regs;
+	enum spi_fiq_mode mode;
+	struct spi_fiq_code *code;
+	int ret;
+
+	if (!fiq_claimed) {
+		/* try and claim fiq if we haven't got it, and if not
+		 * then return and simply use another transfer method */
+
+		ret = claim_fiq(&fiq_handler);
+		if (ret)
+			return;
+	}
+
+	//if (hw->tx && !hw->rx)
+	//	mode = FIQ_MODE_TX;
+	//else if (hw->rx && !hw->tx)
+		mode = FIQ_MODE_RX;
+	//else
+	//	mode = FIQ_MODE_TXRX;
+
+	pregs.uregs[fiq_rspi] = (long)regs;
+	pregs.uregs[fiq_rrx]  = (long)rx;
+	pregs.uregs[fiq_rtx]  = (long)tx + 1;
+	pregs.uregs[fiq_rcount] = len - 1;
+	pregs.uregs[fiq_rirq] = (long)S3C24XX_VA_IRQ;
+
+	set_fiq_regs(&pregs);
+
+	if (fiq_mode != mode) {
+		u32 *ack_ptr;
+
+		fiq_mode = mode;
+
+		switch (mode) {
+		case FIQ_MODE_TX:
+			code = &s3c24xx_spi_fiq_tx;
+			break;
+		case FIQ_MODE_RX:
+			code = &s3c24xx_spi_fiq_rx;
+			break;
+		case FIQ_MODE_TXRX:
+			code = &s3c24xx_spi_fiq_txrx;
+			break;
+		default:
+			code = NULL;
+		}
+
+		BUG_ON(!code);
+
+		ack_ptr = (u32 *)&code->data[code->ack_offset];
+		*ack_ptr = ack_bit(IRQ_SPI1);
+
+		set_fiq_handler(&code->data, code->length);
+	}
+
+	s3c24xx_set_fiq(IRQ_SPI1, true);
+
+	fiq_mode = mode;
+	fiq_inuse = 1;
+}
+
+/**
+ * s3c24xx_spi_fiqop - FIQ core code callback
+ * @pw: Data registered with the handler
+ * @release: Whether this is a release or a return.
+ *
+ * Called by the FIQ code when another module wants to use the FIQ, so
+ * return whether we are currently using this or not and then update our
+ * internal state.
+ */
+static int s3c24xx_spi_fiqop(void *pw, int release)
+{
+	struct s3c24xx_spi *hw = pw;
+	int ret = 0;
+
+	if (release) {
+		if (hw->fiq_inuse)
+			ret = -EBUSY;
+
+		/* note, we do not need to unroute the FIQ, as the FIQ
+		 * vector code de-routes it to signal the end of transfer */
+
+		hw->fiq_mode = FIQ_MODE_NONE;
+		hw->fiq_claimed = 0;
+	} else {
+		hw->fiq_claimed = 1;
+	}
+
+	return ret;
+}
+
+/**
+ * s3c24xx_spi_initfiq - setup the information for the FIQ core
+ * @hw: The hardware state.
+ *
+ * Setup the fiq_handler block to pass to the FIQ core.
+ */
+static inline void s3c24xx_spi_initfiq(struct s3c24xx_spi *hw)
+{
+	hw->fiq_handler.dev_id = hw;
+	hw->fiq_handler.name = dev_name(hw->dev);
+	hw->fiq_handler.fiq_op = s3c24xx_spi_fiqop;
+}
+
+/**
+ * s3c24xx_spi_usefiq - return if we should be using FIQ.
+ * @hw: The hardware state.
+ *
+ * Return true if the platform data specifies whether this channel is
+ * allowed to use the FIQ.
+ */
+static inline bool s3c24xx_spi_usefiq(struct s3c24xx_spi *hw)
+{
+	return hw->pdata->use_fiq;
+}
+
+/**
+ * s3c24xx_spi_usingfiq - return if channel is using FIQ
+ * @spi: The hardware state.
+ *
+ * Return whether the channel is currently using the FIQ (separate from
+ * whether the FIQ is claimed).
+ */
+static inline bool s3c24xx_spi_usingfiq(struct s3c24xx_spi *spi)
+{
+	return spi->fiq_inuse;
+}
+#else
+
+static inline void s3c24xx_spi_initfiq(struct s3c24xx_spi *s) { }
+static inline void s3c24xx_spi_tryfiq(struct s3c24xx_spi *s) { }
+static inline bool s3c24xx_spi_usefiq(struct s3c24xx_spi *s) { return false; }
+static inline bool s3c24xx_spi_usingfiq(struct s3c24xx_spi *s) { return false; }
+
+#endif /* CONFIG_SPI_S3C24XX_FIQ */
 static irqreturn_t s3c24xx_spi_irq(int irq, void *dev)
 {
 	void __iomem	*regs = dev;
 	unsigned long flags;
-	unsigned char spsta = readb(regs + S3C2410_SPSTA);
+	unsigned char spsta;
 	spin_lock_irqsave(&event_lock, flags);
-
-	if (spsta & S3C2410_SPSTA_DCOL) {
-		printk("data-collision\n");
-		goto irq_done;
-	}
+	spsta = readb(regs + S3C2410_SPSTA);
+	//if (spsta & S3C2410_SPSTA_DCOL) {
+	//	printk("data-collision\n");
+	//	goto irq_done;
+	//}
 	if (spsta & S3C2410_SPSTA_READY) 
 	{		
-		//while(spsta & S3C2410_SPSTA_READY){
+		//whi1le(spsta & S3C2410_SPSTA_READY){
 		g_buf[w_len++]=readb(regs + S3C2410_SPRDAT);
-		if(w_len==1023)
-		{
-			w_len=0;
-		}
 		//printk(" %x",g_buf[w_len-1]);
 		//if((w_len%16)==0)
 		//	printk("\n");
 		//spsta = readb(regs + S3C2410_SPSTA);
 		//}
-		//if(w_len%64==0){
-		got_event = 1;
-		wake_up(&wq);//}
+		if(w_len==1024)
+		{
+			got_event = 1;
+			wake_up(&wq);
+			w_len=0;
+		}
 		//writeb(0, regs + S3C2410_SPTDAT);
 	}
 
-irq_done:
+//irq_done:
 	spin_unlock_irqrestore(&event_lock, flags);
 	return IRQ_HANDLED;
 }
@@ -250,6 +451,7 @@ static int __init s3c24xx_spi_init(void)
 	if (rc)
 		goto undo_malloc;
 
+	my_s3c24xx_spi_gpiocfg_bus1_gpg5_6_7(1);
 	clk = clk_get(&pdev->dev, "spi");
 	if (IS_ERR(clk)) {
 		printk("No clock for device\n");
@@ -260,7 +462,7 @@ static int __init s3c24xx_spi_init(void)
 
 	ioarea = request_mem_region(s3c2440_spi1_resource[0].start, resource_size(&s3c2440_spi1_resource[0]),DRVNAME);
 	if (ioarea == NULL) {
-		printk("Cannot reserve region\n");
+		printk("Cannot reserve region1\n");
 		return 0;
 	}
 	regs = ioremap(s3c2440_spi1_resource[0].start, resource_size(&s3c2440_spi1_resource[0]));
@@ -272,7 +474,7 @@ static int __init s3c24xx_spi_init(void)
 	writeb(0x00,regs+S3C2410_SPPRE);
 #if INT_OP
 	writeb((S3C2410_SPCON_SMOD_INT|S3C2410_SPCON_CPOL_LOW|S3C2410_SPCON_CPHA_FMTB),regs+S3C2410_SPCON);
-	err = request_irq(IRQ_SPI1, (void *)s3c24xx_spi_irq, 0, DRVNAME, (void *)regs);
+	err = request_irq(IRQ_SPI1, (void *)s3c24xx_spi_irq, IRQF_DISABLED, DRVNAME, (void *)regs);
 	if (err) {
 		printk("Cannot claim IRQ\n");
 		return 2;
@@ -293,7 +495,6 @@ static int __init s3c24xx_spi_init(void)
 	s3c2410_dma_ctrl(DMACH_SPI1, S3C2410_DMAOP_START);
 #endif
 	writeb(S3C2410_SPPIN_RESERVED,regs+S3C2410_SPPIN);
-	my_s3c24xx_spi_gpiocfg_bus1_gpg5_6_7(1);
 
 	//s3c24xx_spi_ops.dev = &pdev->dev;
 	if (major) {

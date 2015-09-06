@@ -21,7 +21,7 @@
 
 	.text
 
-	@ entry to these ro1utines is as follows, with the register names
+	@ entry to these routines is as follows, with the register names
 	@ defined in fiq.h so that they can be shared with the C files which
 	@ setup the calling registers.
 	@
