@@ -212,7 +212,9 @@ enum spi_fiq_mode {
 	FIQ_MODE_RX	= 2,
 	FIQ_MODE_TXRX	= 3,
 };
-enum spi_fiq_mode mode;
+//enum spi_fiq_mode mode;
+enum spi_fiq_mode	 fiq_mode;
+unsigned char		 fiq_inuse;
 /* Support for FIQ based pseudo-DMA to improve the transfer speed.
  *
  * This code uses the assembly helper in spi_s3c24xx_spi.S which is
@@ -259,9 +261,9 @@ static inline u32 ack_bit(unsigned int irq)
  * so the caller does not need to do anything more than start the transfer
  * as normal, since the IRQ will have been re-routed to the FIQ handler.
 */
-void s3c24xx_spi_tryfiq(struct s3c24xx_spi *hw)
+void s3c24xx_spi_tryfiq(void)
 {
-	struct pt_regs regs;
+	struct pt_regs pregs;
 	enum spi_fiq_mode mode;
 	struct spi_fiq_code *code;
 	int ret;
@@ -334,20 +336,20 @@ void s3c24xx_spi_tryfiq(struct s3c24xx_spi *hw)
  */
 static int s3c24xx_spi_fiqop(void *pw, int release)
 {
-	struct s3c24xx_spi *hw = pw;
+	//struct s3c24xx_spi *hw = pw;
 	int ret = 0;
 
 	if (release) {
-		if (hw->fiq_inuse)
+		if (fiq_inuse)
 			ret = -EBUSY;
 
 		/* note, we do not need to unroute the FIQ, as the FIQ
 		 * vector code de-routes it to signal the end of transfer */
 
-		hw->fiq_mode = FIQ_MODE_NONE;
-		hw->fiq_claimed = 0;
+		fiq_mode = FIQ_MODE_NONE;
+		fiq_claimed = 0;
 	} else {
-		hw->fiq_claimed = 1;
+		fiq_claimed = 1;
 	}
 
 	return ret;
@@ -359,11 +361,11 @@ static int s3c24xx_spi_fiqop(void *pw, int release)
  *
  * Setup the fiq_handler block to pass to the FIQ core.
  */
-static inline void s3c24xx_spi_initfiq(struct s3c24xx_spi *hw)
+static inline void s3c24xx_spi_initfiq(void)
 {
-	hw->fiq_handler.dev_id = hw;
-	hw->fiq_handler.name = dev_name(hw->dev);
-	hw->fiq_handler.fiq_op = s3c24xx_spi_fiqop;
+	//fiq_handler.dev_id = hw;
+	fiq_handler.name = "fiq-spi";//dev_name(hw->dev);
+	fiq_handler.fiq_op = s3c24xx_spi_fiqop;
 }
 
 /**
@@ -373,9 +375,9 @@ static inline void s3c24xx_spi_initfiq(struct s3c24xx_spi *hw)
  * Return true if the platform data specifies whether this channel is
  * allowed to use the FIQ.
  */
-static inline bool s3c24xx_spi_usefiq(struct s3c24xx_spi *hw)
+static inline bool s3c24xx_spi_usefiq(void)
 {
-	return hw->pdata->use_fiq;
+	return 0;//hw->pdata->use_fiq;
 }
 
 /**
@@ -385,16 +387,16 @@ static inline bool s3c24xx_spi_usefiq(struct s3c24xx_spi *hw)
  * Return whether the channel is currently using the FIQ (separate from
  * whether the FIQ is claimed).
  */
-static inline bool s3c24xx_spi_usingfiq(struct s3c24xx_spi *spi)
+static inline bool s3c24xx_spi_usingfiq(void)
 {
-	return spi->fiq_inuse;
+	return fiq_inuse;
 }
 #else
 
-static inline void s3c24xx_spi_initfiq(struct s3c24xx_spi *s) { }
-static inline void s3c24xx_spi_tryfiq(struct s3c24xx_spi *s) { }
-static inline bool s3c24xx_spi_usefiq(struct s3c24xx_spi *s) { return false; }
-static inline bool s3c24xx_spi_usingfiq(struct s3c24xx_spi *s) { return false; }
+static inline void s3c24xx_spi_initfiq() { }
+static inline void s3c24xx_spi_tryfiq() { }
+static inline bool s3c24xx_spi_usefiq() { return false; }
+static inline bool s3c24xx_spi_usingfiq() { return false; }
 
 #endif /* CONFIG_SPI_S3C24XX_FIQ */
 static irqreturn_t s3c24xx_spi_irq(int irq, void *dev)
