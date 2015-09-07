@@ -1,5 +1,5 @@
-#CROSS_COMPILE=/opt/Stone/usr/local/arm/3.4.1/bin/arm-linux-
-CROSS_COMPILE=/home/rdp/work/s3c2440/usr/local/arm/3.4.1/bin/arm-linux-
+CROSS_COMPILE=/opt/Stone/usr/local/arm/3.4.1/bin/arm-linux-
+#CROSS_COMPILE=/home/rdp/work/s3c2440/usr/local/arm/3.4.1/bin/arm-linux-
 ARCH:=arm
 CC:=$(CROSS_COMPILE)gcc
 AS:=$(CROSS_COMPILE)as
@@ -7,8 +7,8 @@ LD:=$(CROSS_COMPILE)ld
 obj-m = module.o
 module-objs = spi_s3c24xx_fiq.o spi_s3c24xx_slave.o
 
-KDIR = /home/rdp/work/s3c2440/linux-2.6.35/
-#KDIR = /opt/Stone/linux-2.6.35
+#KDIR = /home/rdp/work/s3c2440/linux-2.6.35/
+KDIR = /opt/Stone/linux-2.6.35
 PWD = $(shell pwd)
 all:
 	$(MAKE) -C $(KDIR) SUBDIRS=$(PWD) modules
