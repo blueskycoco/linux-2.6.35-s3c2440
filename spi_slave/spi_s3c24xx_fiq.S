@@ -46,8 +46,8 @@ fiq_rx_start:
 	ldrb	fiq_rtmp, [ fiq_rspi, #  S3C2410_SPRDAT ]
 	strb	fiq_rtmp, [ fiq_rrx ], #1
 
-	mov	fiq_rtmp, #0xff
-	strb	fiq_rtmp, [ fiq_rspi, # S3C2410_SPTDAT ]
+@	mov	fiq_rtmp, #0xff
+@	strb	fiq_rtmp, [ fiq_rspi, # S3C2410_SPTDAT ]
 
 	subs	fiq_rcount, fiq_rcount, #1
 	subnes	pc, lr, #4		@@ return, still have work to do

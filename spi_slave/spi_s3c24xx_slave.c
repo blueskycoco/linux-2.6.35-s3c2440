@@ -4,14 +4,14 @@
    process to play with the GPIO pins.
 
    Copyright (c) 2001,2002 Christer Weinigel <wingel@nano-system.com> */
-
+	   
+#include <linux/init.h>
 #include <linux/device.h>
 #include <linux/fs.h>
 #include <linux/module.h>
 #include <linux/errno.h>
 #include <linux/kernel.h>
 #include <linux/slab.h>
-#include <linux/init.h>
 #include <linux/clk.h>
 #include <linux/spinlock.h>
 #include <linux/workqueue.h>
@@ -30,8 +30,8 @@
 #include <linux/cdev.h>
 #define INT_OP 1
 #define XFER_DMAADDR_INVALID DMA_BIT_MASK(32)
-void __iomem		*regs;
-struct clk		*clk;
+//void __iomem		*regs;
+//struct clk		*clk;
 #if INT_OP
 static irqreturn_t s3c24xx_spi_irq(int irq, void *dev);
 #endif
@@ -43,8 +43,86 @@ static int got_event;		/* if events processing have been done */
 int r_len=0,w_len=0;
 char *g_buf=NULL;
 #define DRVNAME "s3c24xx_spi_slave"
+#if INT_OP
+#ifdef CONFIG_SPI_S3C24XX_FIQ
+#include <plat/fiq.h>
+#include <asm/fiq.h>
+#include "spi_s3c24xx_fiq.h"
+//unsigned char		 fiq_claimed;
+//struct fiq_handler	 fiq_handler;
+//unsigned char		*rx;
+//const unsigned char	*tx;
+//int			 len;
 
+enum spi_fiq_mode {
+	FIQ_MODE_NONE	= 0,
+	FIQ_MODE_TX	= 1,
+	FIQ_MODE_RX	= 2,
+	FIQ_MODE_TXRX	= 3,
+};
+//enum spi_fiq_mode mode;
+//enum spi_fiq_mode	 fiq_mode;
+//unsigned char		 fiq_inuse;
+/* Support for FIQ based pseudo-DMA to improve the transfer speed.
+ *
+ * This code uses the assembly helper in spi_s3c24xx_spi.S which is
+ * used by the FIQ core to move data between main memory and the peripheral
+ * block. Since this is code running on the processor, there is no problem
+ * with cache coherency of the buffers, so we can use any buffer we like.
+ */
+
+/**
+ * struct spi_fiq_code - FIQ code and header
+ * @length: The length of the code fragment, excluding this header.
+ * @ack_offset: The offset from @data to the word to place the IRQ ACK bit at.
+ * @data: The code itself to install as a FIQ handler.
+ */
+struct spi_fiq_code {
+	u32	length;
+	u32	ack_offset;
+	u8	data[0];
+};
+
+extern struct spi_fiq_code s3c24xx_spi_fiq_txrx;
+extern struct spi_fiq_code s3c24xx_spi_fiq_tx;
+extern struct spi_fiq_code s3c24xx_spi_fiq_rx;
+#endif
+#endif
 static struct platform_device *pdev;
+struct s3c24xx_spi 
+{
+	void __iomem		*regs;
+	int			 irq;
+	int			 len;
+	int			 count;
+#if INT_OP
+#ifdef CONFIG_SPI_S3C24XX_FIQ
+
+	struct fiq_handler	 fiq_handler;
+	enum spi_fiq_mode	 fiq_mode;
+	unsigned char		 fiq_inuse;
+	unsigned char		 fiq_claimed;
+#endif
+#endif
+	//void			(*set_cs)(struct s3c2410_spi_info *spi,
+	//				  int cs, int pol);
+
+	/* data buffers */
+	const unsigned char	*tx;
+	unsigned char		*rx;
+	//int r_len;
+	//int w_len;
+	//char *g_buf;
+
+	struct clk		*clk;
+	struct resource		*ioarea;
+	//struct spi_master	*master;
+	//struct spi_device	*curdev;
+	//struct device		*dev;
+	//struct s3c2410_spi_info *pdata;
+};
+
+struct s3c24xx_spi *hw;
 
 MODULE_AUTHOR("Christer Weinigel <wingel@nano-system.com>");
 MODULE_DESCRIPTION("NatSemi/AMD SCx200 GPIO Pin Driver");
@@ -89,34 +167,13 @@ static ssize_t s3c24xx_spi_read(struct file *file, char __user *buf,
 		size_t count, loff_t *ppos)
 {
 	ssize_t read=0;
-	int copy_len=0,local_w_len;
 	unsigned long remaining;
 	if (mutex_lock_interruptible(&tlclk_mutex))
 		return -EINTR;		
 	wait_event_interruptible(wq, got_event);
-	local_w_len=w_len;
-	if(local_w_len>r_len)
-	{
-		if(count>(local_w_len-r_len))
-			copy_len=local_w_len-r_len;
-		else
-			copy_len=count;
-	}
-	else
-	{
-		if(count>(1024+local_w_len-r_len))
-			copy_len=1024+local_w_len-r_len;
-		else
-			copy_len=count;
-	}
-	read=copy_len;
-	printk("can read %d bytes\n",copy_len);
-	if(r_len+copy_len>1024){
-	remaining = copy_to_user(buf, g_buf+r_len, 1024-r_len);
-	remaining = copy_to_user(buf, g_buf, copy_len+r_len-1024);
-	}
-	else
-	remaining = copy_to_user(buf, g_buf+r_len, copy_len);
+	
+	read=1024;
+	remaining = copy_to_user(buf, g_buf, 1024);
 	got_event = 0;
 	if (remaining)
 	{
@@ -124,11 +181,7 @@ static ssize_t s3c24xx_spi_read(struct file *file, char __user *buf,
 		return -EFAULT;
 	}
 
-	*ppos += copy_len;
-	if((r_len+copy_len)<1024)
-		r_len=r_len+copy_len;
-	else
-		r_len=r_len+copy_len-1024;
+	*ppos += 1024;
 	mutex_unlock(&tlclk_mutex);
 	return read;
 }
@@ -161,7 +214,7 @@ static struct s3c2410_dma_client s3c24xx_spi_dma_client = {
 static void s3c24xx_spi_dma_rxcb(struct s3c2410_dma_chan *chan, void *buf_id,
 		int size, enum s3c2410_dma_buffresult res)
 {
-	//void __iomem *regs = buf_id;
+	struct s3c24xx_spi *hw= (struct s3c24xx_spi *)buf_id;
 	unsigned long flags;
 
 	spin_lock_irqsave(&event_lock, flags);
@@ -184,61 +237,20 @@ static void s3c24xx_spi_dma_rxcb(struct s3c2410_dma_chan *chan, void *buf_id,
 	spin_unlock_irqrestore(&event_lock, flags);
 }
 
-static int acquire_dma(unsigned int rx_dmach,unsigned long reg)
+static int acquire_dma(unsigned int rx_dmach,void *buf_id)
 {
+	struct s3c24xx_spi *hw= (struct s3c24xx_spi *)buf_id;
 	if (s3c2410_dma_request(rx_dmach,
 				&s3c24xx_spi_dma_client, NULL) < 0) {
 		printk("cannot get RxDMA\n");
 		return 0;
 	}
 	s3c2410_dma_set_buffdone_fn(rx_dmach, s3c24xx_spi_dma_rxcb);
-	s3c2410_dma_devconfig(rx_dmach, S3C2410_DMASRC_HW,reg + S3C2410_SPRDAT);
+	s3c2410_dma_devconfig(rx_dmach, S3C2410_DMASRC_HW,hw->regs + S3C2410_SPRDAT);
 	return 1;
 }
 #else
 #ifdef CONFIG_SPI_S3C24XX_FIQ
-#include <plat/fiq.h>
-#include <asm/fiq.h>
-#include "spi_s3c24xx_fiq.h"
-unsigned char		 fiq_claimed;
-struct fiq_handler	 fiq_handler;
-unsigned char		*rx;
-const unsigned char	*tx;
-int			 len;
-
-enum spi_fiq_mode {
-	FIQ_MODE_NONE	= 0,
-	FIQ_MODE_TX	= 1,
-	FIQ_MODE_RX	= 2,
-	FIQ_MODE_TXRX	= 3,
-};
-//enum spi_fiq_mode mode;
-enum spi_fiq_mode	 fiq_mode;
-unsigned char		 fiq_inuse;
-/* Support for FIQ based pseudo-DMA to improve the transfer speed.
- *
- * This code uses the assembly helper in spi_s3c24xx_spi.S which is
- * used by the FIQ core to move data between main memory and the peripheral
- * block. Since this is code running on the processor, there is no problem
- * with cache coherency of the buffers, so we can use any buffer we like.
- */
-
-/**
- * struct spi_fiq_code - FIQ code and header
- * @length: The length of the code fragment, excluding this header.
- * @ack_offset: The offset from @data to the word to place the IRQ ACK bit at.
- * @data: The code itself to install as a FIQ handler.
- */
-struct spi_fiq_code {
-	u32	length;
-	u32	ack_offset;
-	u8	data[0];
-};
-
-extern struct spi_fiq_code s3c24xx_spi_fiq_txrx;
-extern struct spi_fiq_code s3c24xx_spi_fiq_tx;
-extern struct spi_fiq_code s3c24xx_spi_fiq_rx;
-
 /**
  * ack_bit - turn IRQ into IRQ acknowledgement bit
  * @irq: The interrupt number
@@ -261,18 +273,18 @@ static inline u32 ack_bit(unsigned int irq)
  * so the caller does not need to do anything more than start the transfer
  * as normal, since the IRQ will have been re-routed to the FIQ handler.
 */
-void s3c24xx_spi_tryfiq(void)
+void s3c24xx_spi_tryfiq(struct s3c24xx_spi *hw)
 {
 	struct pt_regs pregs;
 	enum spi_fiq_mode mode;
 	struct spi_fiq_code *code;
 	int ret;
 
-	if (!fiq_claimed) {
+	if (!hw->fiq_claimed) {
 		/* try and claim fiq if we haven't got it, and if not
 		 * then return and simply use another transfer method */
 
-		ret = claim_fiq(&fiq_handler);
+		ret = claim_fiq(&hw->fiq_handler);
 		if (ret)
 			return;
 	}
@@ -284,18 +296,18 @@ void s3c24xx_spi_tryfiq(void)
 	//else
 	//	mode = FIQ_MODE_TXRX;
 
-	pregs.uregs[fiq_rspi] = (long)regs;
-	pregs.uregs[fiq_rrx]  = (long)rx;
-	pregs.uregs[fiq_rtx]  = (long)tx + 1;
-	pregs.uregs[fiq_rcount] = len - 1;
+	pregs.uregs[fiq_rspi] = (long)hw->regs;
+	pregs.uregs[fiq_rrx]  = (long)g_buf;
+	pregs.uregs[fiq_rtx]  = (long)hw->tx + 1;
+	pregs.uregs[fiq_rcount] = hw->len - 1;
 	pregs.uregs[fiq_rirq] = (long)S3C24XX_VA_IRQ;
 
 	set_fiq_regs(&pregs);
 
-	if (fiq_mode != mode) {
+	if (hw->fiq_mode != mode) {
 		u32 *ack_ptr;
 
-		fiq_mode = mode;
+		hw->fiq_mode = mode;
 
 		switch (mode) {
 		case FIQ_MODE_TX:
@@ -321,8 +333,8 @@ void s3c24xx_spi_tryfiq(void)
 
 	s3c24xx_set_fiq(IRQ_SPI1, true);
 
-	fiq_mode = mode;
-	fiq_inuse = 1;
+	hw->fiq_mode = mode;
+	hw->fiq_inuse = 1;
 }
 
 /**
@@ -336,20 +348,20 @@ void s3c24xx_spi_tryfiq(void)
  */
 static int s3c24xx_spi_fiqop(void *pw, int release)
 {
-	//struct s3c24xx_spi *hw = pw;
+	struct s3c24xx_spi *hw = pw;
 	int ret = 0;
 
 	if (release) {
-		if (fiq_inuse)
+		if (hw->fiq_inuse)
 			ret = -EBUSY;
 
 		/* note, we do not need to unroute the FIQ, as the FIQ
 		 * vector code de-routes it to signal the end of transfer */
 
-		fiq_mode = FIQ_MODE_NONE;
-		fiq_claimed = 0;
+		hw->fiq_mode = FIQ_MODE_NONE;
+		hw->fiq_claimed = 0;
 	} else {
-		fiq_claimed = 1;
+		hw->fiq_claimed = 1;
 	}
 
 	return ret;
@@ -361,23 +373,11 @@ static int s3c24xx_spi_fiqop(void *pw, int release)
  *
  * Setup the fiq_handler block to pass to the FIQ core.
  */
-static inline void s3c24xx_spi_initfiq(void)
+static inline void s3c24xx_spi_initfiq(struct s3c24xx_spi *hw)
 {
-	//fiq_handler.dev_id = hw;
-	fiq_handler.name = "fiq-spi";//dev_name(hw->dev);
-	fiq_handler.fiq_op = s3c24xx_spi_fiqop;
-}
-
-/**
- * s3c24xx_spi_usefiq - return if we should be using FIQ.
- * @hw: The hardware state.
- *
- * Return true if the platform data specifies whether this channel is
- * allowed to use the FIQ.
- */
-static inline bool s3c24xx_spi_usefiq(void)
-{
-	return 0;//hw->pdata->use_fiq;
+	hw->fiq_handler.dev_id = hw;
+	hw->fiq_handler.name = "fiq-spi";//dev_name(hw->dev);
+	hw->fiq_handler.fiq_op = s3c24xx_spi_fiqop;
 }
 
 /**
@@ -387,48 +387,39 @@ static inline bool s3c24xx_spi_usefiq(void)
  * Return whether the channel is currently using the FIQ (separate from
  * whether the FIQ is claimed).
  */
-static inline bool s3c24xx_spi_usingfiq(void)
+static inline bool s3c24xx_spi_usingfiq(struct s3c24xx_spi *hw)
 {
-	return fiq_inuse;
+	return hw->fiq_inuse;
 }
 #else
 
 static inline void s3c24xx_spi_initfiq() { }
-static inline void s3c24xx_spi_tryfiq() { }
-static inline bool s3c24xx_spi_usefiq() { return false; }
-static inline bool s3c24xx_spi_usingfiq() { return false; }
+static inline void s3c24xx_spi_tryfiq(struct s3c24xx_spi *hw) { }
+static inline bool s3c24xx_spi_usingfiq(struct s3c24xx_spi *hw) { return false; }
 
 #endif /* CONFIG_SPI_S3C24XX_FIQ */
 static irqreturn_t s3c24xx_spi_irq(int irq, void *dev)
-{
-	void __iomem	*regs = dev;
+{	
+	struct s3c24xx_spi *hw=(struct s3c24xx_spi *)dev;
 	unsigned long flags;
 	unsigned char spsta;
 	spin_lock_irqsave(&event_lock, flags);
-	spsta = readb(regs + S3C2410_SPSTA);
-	//if (spsta & S3C2410_SPSTA_DCOL) {
-	//	printk("data-collision\n");
-	//	goto irq_done;
-	//}
+	spsta = readb(hw->regs + S3C2410_SPSTA);
+	if (spsta & S3C2410_SPSTA_DCOL) {
+		printk("data-collision\n");
+		goto irq_done;
+	}
 	if (spsta & S3C2410_SPSTA_READY) 
 	{		
-		//whi1le(spsta & S3C2410_SPSTA_READY){
-		g_buf[w_len++]=readb(regs + S3C2410_SPRDAT);
-		//printk(" %x",g_buf[w_len-1]);
-		//if((w_len%16)==0)
-		//	printk("\n");
-		//spsta = readb(regs + S3C2410_SPSTA);
-		//}
-		if(w_len==1024)
-		{
-			got_event = 1;
-			wake_up(&wq);
-			w_len=0;
-		}
-		//writeb(0, regs + S3C2410_SPTDAT);
+		hw->fiq_inuse = 0;
+		g_buf[hw->len-1]=readb(hw->regs + S3C2410_SPRDAT);
+		got_event = 1;
+		wake_up(&wq);
+		hw->len=1024;
+		s3c24xx_spi_tryfiq(hw);
 	}
 
-//irq_done:
+irq_done:
 	spin_unlock_irqrestore(&event_lock, flags);
 	return IRQ_HANDLED;
 }
@@ -442,7 +433,7 @@ static int __init s3c24xx_spi_init(void)
 	dma_addr_t		rx_dma;
 #endif
 	dev_t devid;
-	struct resource 	*ioarea;
+	//struct resource 	*ioarea;
 
 	/* support dev_dbg() with pdev->dev */
 	pdev = platform_device_alloc(DRVNAME, 0);
@@ -454,49 +445,49 @@ static int __init s3c24xx_spi_init(void)
 		goto undo_malloc;
 
 	my_s3c24xx_spi_gpiocfg_bus1_gpg5_6_7(1);
-	clk = clk_get(&pdev->dev, "spi");
-	if (IS_ERR(clk)) {
+	hw->clk = clk_get(&pdev->dev, "spi");
+	if (IS_ERR(hw->clk)) {
 		printk("No clock for device\n");
 		return 2;
 	}
 	g_buf=kmalloc(1024*sizeof(unsigned char),GFP_KERNEL);
 	memset(g_buf,0,1024);
 
-	ioarea = request_mem_region(s3c2440_spi1_resource[0].start, resource_size(&s3c2440_spi1_resource[0]),DRVNAME);
-	if (ioarea == NULL) {
+	hw->ioarea = request_mem_region(s3c2440_spi1_resource[0].start, resource_size(&s3c2440_spi1_resource[0]),DRVNAME);
+	if (hw->ioarea == NULL) {
 		printk("Cannot reserve region1\n");
 		return 0;
 	}
-	regs = ioremap(s3c2440_spi1_resource[0].start, resource_size(&s3c2440_spi1_resource[0]));
-	if (regs == NULL) {
+	hw->regs = ioremap(s3c2440_spi1_resource[0].start, resource_size(&s3c2440_spi1_resource[0]));
+	if (hw->regs == NULL) {
 		printk("Cannot map IO\n");
 		return 1;
 	}
-	clk_enable(clk);
-	writeb(0x00,regs+S3C2410_SPPRE);
+	clk_enable(hw->clk);
+	writeb(0x00,hw->regs+S3C2410_SPPRE);
 #if INT_OP
-	writeb((S3C2410_SPCON_SMOD_INT|S3C2410_SPCON_CPOL_LOW|S3C2410_SPCON_CPHA_FMTB),regs+S3C2410_SPCON);
-	err = request_irq(IRQ_SPI1, (void *)s3c24xx_spi_irq, IRQF_DISABLED, DRVNAME, (void *)regs);
+	writeb((S3C2410_SPCON_SMOD_INT|S3C2410_SPCON_CPOL_LOW|S3C2410_SPCON_CPHA_FMTB),hw->regs+S3C2410_SPCON);
+	err = request_irq(IRQ_SPI1, (void *)s3c24xx_spi_irq, IRQF_DISABLED, DRVNAME, (void *)hw);
 	if (err) {
 		printk("Cannot claim IRQ\n");
 		return 2;
 	}
 #else	
-	acquire_dma(DMACH_SPI1,(unsigned long)regs);
+	acquire_dma(DMACH_SPI1,(void *)hw);
 	rx_dma = dma_map_single(&pdev->dev, g_buf,1024, DMA_FROM_DEVICE);
 	if (dma_mapping_error(&pdev->dev, rx_dma)) {
 		printk("dma_map_single Rx failed\n");
 		rx_dma = XFER_DMAADDR_INVALID;
-		iounmap((void *) regs);
+		iounmap((void *) hw->regs);
 		release_mem_region(s3c2440_spi1_resource[0].start, resource_size(&s3c2440_spi1_resource[0]));
 		return -ENOMEM;
 	}
-	writeb((S3C2410_SPCON_SMOD_DMA|S3C2410_SPCON_CPOL_HIGH|S3C2410_SPCON_CPHA_FMTB),regs+S3C2410_SPCON);
+	writeb((S3C2410_SPCON_SMOD_DMA|S3C2410_SPCON_CPOL_HIGH|S3C2410_SPCON_CPHA_FMTB),hw->regs+S3C2410_SPCON);
 	s3c2410_dma_config(DMACH_SPI1, 32 / 8);
-	s3c2410_dma_enqueue(DMACH_SPI1, (void *)regs,	rx_dma, 64);
+	s3c2410_dma_enqueue(DMACH_SPI1, (void *)hw,	rx_dma, 64);
 	s3c2410_dma_ctrl(DMACH_SPI1, S3C2410_DMAOP_START);
 #endif
-	writeb(S3C2410_SPPIN_RESERVED,regs+S3C2410_SPPIN);
+	writeb(S3C2410_SPPIN_RESERVED,hw->regs+S3C2410_SPPIN);
 
 	//s3c24xx_spi_ops.dev = &pdev->dev;
 	if (major) {
@@ -513,7 +504,12 @@ static int __init s3c24xx_spi_init(void)
 
 	cdev_init(&s3c24xx_spi_cdev, &s3c24xx_spi_fileops);
 	cdev_add(&s3c24xx_spi_cdev, devid, MAX_PINS);
-
+#if INT_OP
+#ifdef CONFIG_SPI_S3C24XX_FIQ
+hw->len=1024;
+s3c24xx_spi_tryfiq(hw);
+#endif
+#endif
 	return 0; /* succeed */
 
 undo_platform_device_add:
@@ -527,13 +523,13 @@ undo_malloc:
 static void __exit s3c24xx_spi_cleanup(void)
 {
 #if INT_OP
-	free_irq(IRQ_SPI1, regs);
+	free_irq(IRQ_SPI1, hw->regs);
 #else
 	s3c2410_dma_free(DMACH_SPI1, &s3c24xx_spi_dma_client);
 #endif
 
-	iounmap((void *) regs);
-	clk_disable(clk);
+	iounmap((void *) hw->regs);
+	clk_disable(hw->clk);
 	release_mem_region(s3c2440_spi1_resource[0].start, resource_size(&s3c2440_spi1_resource[0]));
 	cdev_del(&s3c24xx_spi_cdev);
 	/* cdev_put(&s3c24xx_spi_cdev); */
