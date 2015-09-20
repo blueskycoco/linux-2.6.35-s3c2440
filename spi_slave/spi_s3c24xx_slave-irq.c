@@ -19,6 +19,7 @@
 #include <linux/interrupt.h>
 #include <linux/platform_device.h>
 #include <asm/uaccess.h>
+#include <linux/mm.h>
 #include <asm/io.h>
 #include <linux/gpio.h>
 #include <mach/spi.h>
@@ -40,7 +41,7 @@ static DECLARE_WAIT_QUEUE_HEAD(wq);
 static DEFINE_SPINLOCK(event_lock);
 
 static int got_event;		/* if events processing have been done */
-int r_len=0,w_len=0;
+int r_len=0,w_len=0,index=0;
 char *g_buf=NULL;
 #define DRVNAME "s3c24xx_spi_slave"
 
@@ -49,7 +50,7 @@ static struct platform_device *pdev;
 MODULE_AUTHOR("Christer Weinigel <wingel@nano-system.com>");
 MODULE_DESCRIPTION("NatSemi/AMD SCx200 GPIO Pin Driver");
 MODULE_LICENSE("GPL");
-
+struct fasync_struct *async_queue;
 static int major = 0;		/* default to dynamic major */
 module_param(major, int, 0);
 MODULE_PARM_DESC(major, "Major device number");
@@ -80,9 +81,13 @@ static int s3c24xx_spi_open(struct inode *inode, struct file *file)
 		return -EINVAL;
 	return nonseekable_open(inode, file);
 }
-
+static int globalfifo_fasync(int fd, struct file *filp, int mode)
+{ 
+     return fasync_helper(fd, filp, mode, &async_queue);
+}
 static int s3c24xx_spi_release(struct inode *inode, struct file *file)
 {
+	globalfifo_fasync(-1, file, 0);
 	return 0;
 }
 static ssize_t s3c24xx_spi_read(struct file *file, char __user *buf,
@@ -92,7 +97,9 @@ static ssize_t s3c24xx_spi_read(struct file *file, char __user *buf,
 	int copy_len=0;
 	unsigned long remaining;
 	if (mutex_lock_interruptible(&tlclk_mutex))
-		return -EINTR;		
+		return -EINTR;	
+	copy_to_user(buf, &index, 1);
+	return 1;
 	wait_event_interruptible(wq, got_event);
 	if(w_len>r_len)
 	{
@@ -131,14 +138,25 @@ static ssize_t s3c24xx_spi_read(struct file *file, char __user *buf,
 	mutex_unlock(&tlclk_mutex);
 	return read;
 }
+static int memdev_mmap(struct file *filp, struct vm_area_struct *vma)
+{
+      //struct mem_dev *dev = filp->private_data; /*获得设备结构体指针*/
+      
+      vma->vm_flags |= VM_IO;
+      vma->vm_flags |= VM_RESERVED;
 
+      if (remap_pfn_range(vma,vma->vm_start,virt_to_phys(g_buf)>>PAGE_SHIFT, vma->vm_end - vma->vm_start, vma->vm_page_prot))
+          return  -EAGAIN;
+      return 0;
+}
 static const struct file_operations s3c24xx_spi_fileops = {
 	.owner   = THIS_MODULE,
 	.read    = s3c24xx_spi_read,
 	.open    = s3c24xx_spi_open,
 	.release = s3c24xx_spi_release,
+	.mmap = memdev_mmap,
+	.fasync = globalfifo_fasync,
 };
-
 static struct cdev s3c24xx_spi_cdev;  /* use 1 cdev for all pins */
 
 static struct resource s3c2440_spi1_resource[] = {
@@ -210,19 +228,17 @@ static irqreturn_t s3c24xx_spi_irq(int irq, void *dev)
 	{		
 		//while(spsta & S3C2410_SPSTA_READY){
 		g_buf[w_len++]=readb(regs + S3C2410_SPRDAT);
-		if(w_len==1023)
+		if(w_len==4096)
 		{
 			w_len=0;
+			//got_event = 1;
+			//wake_up(&wq);
+			 if(async_queue)
+			 {
+				 kill_fasync(&async_queue, SIGIO, POLL_IN);
+				 //printk("<0>%s kill SIGIO\n", __func__);
+			}
 		}
-		//printk(" %x",g_buf[w_len-1]);
-		//if((w_len%16)==0)
-		//	printk("\n");
-		//spsta = readb(regs + S3C2410_SPSTA);
-		//}
-		//if(w_len%64==0){
-		got_event = 1;
-		wake_up(&wq);//}
-		//writeb(0, regs + S3C2410_SPTDAT);
 	}
 
 irq_done:
@@ -255,7 +271,7 @@ static int __init s3c24xx_spi_init(void)
 		printk("No clock for device\n");
 		return 2;
 	}
-	g_buf=kmalloc(1024*sizeof(unsigned char),GFP_KERNEL);
+	g_buf=kmalloc(4096*sizeof(unsigned char),GFP_KERNEL);
 	memset(g_buf,0,1024);
 
 	ioarea = request_mem_region(s3c2440_spi1_resource[0].start, resource_size(&s3c2440_spi1_resource[0]),DRVNAME);
@@ -328,7 +344,6 @@ static void __exit s3c24xx_spi_cleanup(void)
 #else
 	s3c2410_dma_free(DMACH_SPI1, &s3c24xx_spi_dma_client);
 #endif
-
 	iounmap((void *) regs);
 	clk_disable(clk);
 	release_mem_region(s3c2440_spi1_resource[0].start, resource_size(&s3c2440_spi1_resource[0]));
