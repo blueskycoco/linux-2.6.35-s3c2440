@@ -15,7 +15,7 @@ void my_signal_fun(int signum)
     //read(fd, &key_val, 1); 
 	//if(key_val)
 	//	begin=2048;
-	for(i=0;i<2048;i++)
+	for(i=0;i<256;i++)
 	{
 		printf("%02x ",start[i]);
 		if((((i+1)%16)==0 && i!=0)||(start[i]==255))

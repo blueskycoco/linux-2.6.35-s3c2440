@@ -99,6 +99,9 @@ static ssize_t s3c24xx_spi_read(struct file *file, char __user *buf,
 	if (mutex_lock_interruptible(&tlclk_mutex))
 		return -EINTR;	
 	copy_to_user(buf, &index, 1);
+	//writeb(0xaa,regs+S3C2410_SPTDAT);
+	//writeb(0x55,regs+S3C2410_SPTDAT);
+	mutex_unlock(&tlclk_mutex);
 	return 1;
 	wait_event_interruptible(wq, got_event);
 	if(w_len>r_len)
@@ -228,15 +231,16 @@ static irqreturn_t s3c24xx_spi_irq(int irq, void *dev)
 	{		
 		//while(spsta & S3C2410_SPSTA_READY){
 		g_buf[w_len++]=readb(regs + S3C2410_SPRDAT);
-		if(w_len==4096)
+		if(w_len==256)
 		{
 			w_len=0;
+			writeb(0xaa,regs+S3C2410_SPTDAT);
 			//got_event = 1;
 			//wake_up(&wq);
 			 if(async_queue)
 			 {
 				 kill_fasync(&async_queue, SIGIO, POLL_IN);
-				 //printk("<0>%s kill SIGIO\n", __func__);
+				 printk("<0>%s kill SIGIO\n", __func__);
 			}
 		}
 	}
