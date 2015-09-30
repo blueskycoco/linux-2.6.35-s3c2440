@@ -127,12 +127,12 @@ static struct mtd_partition smdk_default_nand_part[] = {
 	[3] = {
 		.name	= "rootfs.yaffs2",
 		.offset	= 0x2f0000,
-		.size	= 0x1e00000,
+		.size	= 0x2100000,
 	},
 	[4] = {
 		.name	= "user store",
-		.offset = 0x20f0000,
-		.size	= 0x1f10000,
+		.offset = 0x23f0000,
+		.size	= 0x1c10000,
 	}
 };
 
