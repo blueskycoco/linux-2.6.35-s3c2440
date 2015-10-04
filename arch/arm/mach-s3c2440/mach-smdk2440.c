@@ -21,7 +21,11 @@
 #include <linux/init.h>
 #include <linux/serial_core.h>
 #include <linux/platform_device.h>
+#include <linux/gpio.h>
+#include <linux/input.h>
 #include <linux/io.h>
+#include <linux/mmc/host.h>
+#include <plat/mci.h>
 
 #include <asm/mach/arch.h>
 #include <asm/mach/map.h>
@@ -39,6 +43,8 @@
 #include <mach/fb.h>
 #include <plat/iic.h>
 
+#include <plat/gpio-cfg.h>
+#include <mach/regs-gpio.h>
 #include <plat/s3c2410.h>
 #include <plat/s3c244x.h>
 #include <plat/clock.h>
@@ -154,6 +160,14 @@ static struct s3c2410fb_mach_info smdk2440_fb_info __initdata = {
 	.lpcsel		= ((0xCE6) & ~7) | 1<<4,
 };
 
+/* MMC/SD  */
+
+static struct s3c24xx_mci_pdata mini2440_mmc_cfg __initdata = {
+   .gpio_detect   = S3C2410_GPG(8),
+   .gpio_wprotect = S3C2410_GPH(8),
+   .set_power     = NULL,
+   .ocr_avail     = MMC_VDD_32_33|MMC_VDD_33_34,
+};
 static struct platform_device *smdk2440_devices[] __initdata = {
 	&s3c_device_ohci,
 	&s3c_device_lcd,
@@ -161,6 +175,7 @@ static struct platform_device *smdk2440_devices[] __initdata = {
 	&s3c_device_i2c0,
 	&s3c_device_iis,
 	&s3c_device_rtc,
+	&s3c_device_sdi,
 };
 
 static void __init smdk2440_map_io(void)
@@ -174,6 +189,7 @@ static void __init smdk2440_machine_init(void)
 {
 	s3c24xx_fb_set_platdata(&smdk2440_fb_info);
 	s3c_i2c0_set_platdata(NULL);
+	s3c24xx_mci_set_platdata(&mini2440_mmc_cfg);
 
 	platform_add_devices(smdk2440_devices, ARRAY_SIZE(smdk2440_devices));
 	smdk_machine_init();
