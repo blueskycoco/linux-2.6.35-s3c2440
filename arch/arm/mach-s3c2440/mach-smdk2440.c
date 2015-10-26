@@ -180,6 +180,7 @@ static int z2_lbs_spi_setup(struct spi_device *spi)
 	s3c_gpio_cfgpin(S3C2410_GPE(11), S3C2410_GPE11_SPIMISO0);
 	s3c2410_gpio_pullup(S3C2410_GPE(11), 0);
 	s3c2410_gpio_pullup(S3C2410_GPE(13), 0);
+	s3c2410_gpio_pullup(S3C2410_GPE(12), 0);
 	spi->bits_per_word = 8;
 	spi->mode = SPI_MODE_2;
 
@@ -215,7 +216,7 @@ static struct spi_board_info spi_board_info[] __initdata = {
 	.max_speed_hz		= 13000000,
 	.bus_num		= 0,
 	.chip_select		= 0,
-	.mode			= SPI_CPHA|SPI_CPOL,
+	//.mode			= /*SPI_CPHA|*/SPI_CPOL,
 },
 };
 
