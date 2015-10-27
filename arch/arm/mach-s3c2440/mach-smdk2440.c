@@ -175,12 +175,17 @@ static int z2_lbs_spi_setup(struct spi_device *spi)
 {
 	int ret = 0;
 	//s3c24xx_spi_gpiocfg_bus0_gpe11_12_13(spi,true);
-	s3c_gpio_cfgpin(S3C2410_GPE(13), S3C2410_GPE13_SPICLK0);
-	s3c_gpio_cfgpin(S3C2410_GPE(12), S3C2410_GPE12_SPIMOSI0);
-	s3c_gpio_cfgpin(S3C2410_GPE(11), S3C2410_GPE11_SPIMISO0);
-	s3c2410_gpio_pullup(S3C2410_GPE(11), 0);
-	s3c2410_gpio_pullup(S3C2410_GPE(13), 0);
-	s3c2410_gpio_pullup(S3C2410_GPE(12), 0);
+		s3c_gpio_cfgpin(S3C2410_GPG(7), S3C2410_GPG7_SPICLK1);
+		s3c_gpio_cfgpin(S3C2410_GPG(6), S3C2410_GPG6_SPIMOSI1);
+		s3c_gpio_cfgpin(S3C2410_GPG(5), S3C2410_GPG5_SPIMISO1);
+		s3c2410_gpio_pullup(S3C2410_GPG(5), 0);
+		s3c2410_gpio_pullup(S3C2410_GPG(6), 0);
+	//s3c_gpio_cfgpin(S3C2410_GPE(13), S3C2410_GPE13_SPICLK0);
+	//s3c_gpio_cfgpin(S3C2410_GPE(12), S3C2410_GPE12_SPIMOSI0);
+	//s3c_gpio_cfgpin(S3C2410_GPE(11), S3C2410_GPE11_SPIMISO0);
+	//s3c2410_gpio_pullup(S3C2410_GPE(11), 0);
+	//s3c2410_gpio_pullup(S3C2410_GPE(13), 0);
+	//s3c2410_gpio_pullup(S3C2410_GPE(12), 0);
 	spi->bits_per_word = 8;
 	spi->mode = SPI_MODE_2;
 
@@ -197,8 +202,10 @@ static int z2_lbs_spi_teardown(struct spi_device *spi)
 
 static struct s3c2410_spi_info z2_lbs_chip_info = {
 	.num_cs		= 1,
-	.bus_num	= 0,
-	.pin_cs	= S3C2410_GPG(2),
+	.bus_num	= 1,
+	.pin_cs	= S3C2410_GPG(3),
+	.use_fiq = 0,
+	.gpio_setup = s3c24xx_spi_gpiocfg_bus1_gpg5_6_7,//s3c24xx_spi_gpiocfg_bus0_gpe11_12_13,
 };
 
 static struct libertas_spi_platform_data z2_lbs_pdata = {
@@ -214,15 +221,15 @@ static struct spi_board_info spi_board_info[] __initdata = {
 	.controller_data	= &z2_lbs_chip_info,
 	.irq			= IRQ_EINT1,
 	.max_speed_hz		= 13000000,
-	.bus_num		= 0,
+	.bus_num		= 1,
 	.chip_select		= 0,
-	//.mode			= /*SPI_CPHA|*/SPI_CPOL,
+	//.mode			= SPI_CPHA|SPI_CPOL,
 },
 };
 
 static void __init z2_spi_init(void)
 {
-	s3c_device_spi0.dev.platform_data= &z2_lbs_chip_info;
+	s3c_device_spi1.dev.platform_data= &z2_lbs_chip_info;
 	spi_register_board_info(spi_board_info, ARRAY_SIZE(spi_board_info));
 }
 static struct platform_device *smdk2440_devices[] __initdata = {
@@ -233,7 +240,7 @@ static struct platform_device *smdk2440_devices[] __initdata = {
 	&s3c_device_iis,
 	&s3c_device_rtc,
 	&s3c_device_sdi,
-	&s3c_device_spi0,
+	&s3c_device_spi1,
 };
 
 static void __init smdk2440_map_io(void)
