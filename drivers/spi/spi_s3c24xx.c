@@ -140,7 +140,7 @@ static int s3c24xx_spi_update_state(struct spi_device *spi,
 	if (!hz)
 		hz = spi->max_speed_hz;
 
-	if (bpw != 8) {
+	if ((bpw != 8)&& (bpw != 16)){
 		dev_err(&spi->dev, "invalid bits-per-word (%d)\n", bpw);
 		return -EINVAL;
 	}
@@ -433,7 +433,7 @@ unsigned char spi_write8(struct s3c24xx_spi *hw,char Data)
 	unsigned short waitCount = 0;
     
 
-	while(!spi_ready(hw));
+	//while(!spi_ready(hw));
 
 	writeb(Data,hw->regs +S3C2410_SPTDAT);
 	waitCount = 1000;
@@ -451,40 +451,87 @@ SEND_ERROR:
     
 	return bRet;
 }
+unsigned char spi_read8(struct s3c24xx_spi *hw)
+{	
+	while(!spi_ready(hw));
+	return (readb(hw->regs+S3C2410_SPRDAT));
+}
+
 static int s3c24xx_spi_txrx(struct spi_device *spi, struct spi_transfer *t)
 {
 	struct s3c24xx_spi *hw = to_hw(spi);
 	int i=0;
+	//static int flag=1;
+	//unsigned char data1,data2;
+	//char cmd[4]={0x38,0x80,0xab,0xcd};
 	hw->tx = t->tx_buf;
 	hw->rx = t->rx_buf;
 	hw->len = t->len;
 	hw->count = 0;
 
-	init_completion(&hw->done);
+	//init_completion(&hw->done);
 
-	hw->fiq_inuse = 0;
-	if (s3c24xx_spi_usefiq(hw) && t->len >= 3)
-		s3c24xx_spi_tryfiq(hw);
+	//hw->fiq_inuse = 0;
+	//if (s3c24xx_spi_usefiq(hw) && t->len >= 3)
+	//	s3c24xx_spi_tryfiq(hw);
+	//writeb(hw_txbyte(hw, 0), hw->regs + S3C2410_SPTDAT);
+
+	//wait_for_completion(&hw->done);
+	for (i = 0; i < t->len; i=i+1) 
+	{
+		spi_write8(hw,hw_txbyte(hw,i));
+		if(hw->rx)
+			hw->rx[i]=spi_read8(hw);
+	//	udelay(2);
+    }
+	hw->count = hw->len;
+	#if 0
 	//for(i=0;i<hw->len;i++)
 	//printk("%02x ",hw->tx[i]);
 	//printk("==>\n");
 	/* send the first byte */
-	for (i = 0; i < hw->len; i=i+2) 
+	if(flag){
+	for (i = 0; i < 4; i=i+2) 
 	{
-		spi_write8(hw,hw_txbyte(hw,i+1));
-		spi_write8(hw,hw_txbyte(hw,i));
+		spi_write8(hw,cmd[i]);
+		spi_write8(hw,cmd[i+1]);
 		udelay(2);
     }
-
-	if ((hw->len % 4) != 0) {
-		spi_write8(hw,0);
-		spi_write8(hw,0);
-		udelay(2);
-	}
+	flag=0;
+	
+	//s3c24xx_spi_chipsel(spi,BITBANG_CS_INACTIVE);
+		}
+	else
+		{
+	//s3c24xx_spi_chipsel(spi,BITBANG_CS_INACTIVE);
+	//udelay(500);
+	//s3c24xx_spi_chipsel(spi,BITBANG_CS_ACTIVE);
+	spi_write8(hw,0x38);
+	spi_write8(hw,0x80);
+	udelay(2);
+	for(i=0;i<3;i++){
+	spi_write8(hw,0xff);
+	data1=spi_read8(hw);
+	spi_write8(hw,0xff);
+	data2=spi_read8(hw);
+	udelay(2);
+		}
+	printk("1<== %02x\n",data1);	
+	printk("2<== %02x\n",data2);	
+	flag=1;
+		}
+		//udelay(2);
+	
+	//if ((hw->len % 4) != 0) {
+	//	spi_write8(hw,0);
+	//	spi_write8(hw,0);
+	//	udelay(2);
+	//}
 	hw->count = hw->len;
 	//writeb(hw_txbyte(hw, 0), hw->regs + S3C2410_SPTDAT);
 
 	//wait_for_completion(&hw->done);
+	#endif
 	return hw->count;
 }
 
@@ -641,10 +688,10 @@ static int __init s3c24xx_spi_probe(struct platform_device *pdev)
 	}
 
 	//err = request_irq(hw->irq, s3c24xx_spi_irq, 0, pdev->name, hw);
-	//if (err) {
-	//	dev_err(&pdev->dev, "Cannot claim IRQ\n");
-	//	goto err_no_irq;
-	//}
+	if (err) {
+		dev_err(&pdev->dev, "Cannot claim IRQ\n");
+		goto err_no_irq;
+	}
 
 	hw->clk = clk_get(&pdev->dev, "spi");
 	if (IS_ERR(hw->clk)) {

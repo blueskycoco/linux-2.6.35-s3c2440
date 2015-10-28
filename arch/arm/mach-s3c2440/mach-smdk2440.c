@@ -187,7 +187,7 @@ static int z2_lbs_spi_setup(struct spi_device *spi)
 	//s3c2410_gpio_pullup(S3C2410_GPE(13), 0);
 	//s3c2410_gpio_pullup(S3C2410_GPE(12), 0);
 	spi->bits_per_word = 16;
-	spi->mode = SPI_MODE_1;
+	spi->mode = SPI_MODE_2;
 
 	spi_setup(spi);
 
@@ -204,7 +204,7 @@ static struct s3c2410_spi_info z2_lbs_chip_info = {
 	.num_cs		= 1,
 	.bus_num	= 1,
 	.pin_cs	= S3C2410_GPG(3),
-	.use_fiq = 0,
+	.use_fiq = 1,
 	.gpio_setup = s3c24xx_spi_gpiocfg_bus1_gpg5_6_7,//s3c24xx_spi_gpiocfg_bus0_gpe11_12_13,
 };
 
