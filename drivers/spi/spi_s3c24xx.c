@@ -418,11 +418,43 @@ static inline bool s3c24xx_spi_usefiq(struct s3c24xx_spi *s) { return false; }
 static inline bool s3c24xx_spi_usingfiq(struct s3c24xx_spi *s) { return false; }
 
 #endif /* CONFIG_SPI_S3C24XX_FIQ */
+unsigned char spi_ready(struct s3c24xx_spi *hw)
+{
 
+	if (!(readb(hw->regs +S3C2410_SPSTA) & S3C2410_SPSTA_READY)) {
+		return 0;
+	}
+	
+	return 1;
+}
+unsigned char spi_write8(struct s3c24xx_spi *hw,char Data)
+{
+    unsigned char    bRet = 1;
+	unsigned short waitCount = 0;
+    
+
+	while(!spi_ready(hw));
+
+	writeb(Data,hw->regs +S3C2410_SPTDAT);
+	waitCount = 1000;
+	while(!spi_ready(hw))
+	{
+		if(--waitCount == 0)
+		{
+			printk("gspi8686.DLL: SPI_Send8() - timeout occurred while waiting to transfer byte\r\n");
+           		 bRet = 0;
+			goto SEND_ERROR;
+		}
+	}
+
+SEND_ERROR:
+    
+	return bRet;
+}
 static int s3c24xx_spi_txrx(struct spi_device *spi, struct spi_transfer *t)
 {
 	struct s3c24xx_spi *hw = to_hw(spi);
-
+	int i=0;
 	hw->tx = t->tx_buf;
 	hw->rx = t->rx_buf;
 	hw->len = t->len;
@@ -433,11 +465,26 @@ static int s3c24xx_spi_txrx(struct spi_device *spi, struct spi_transfer *t)
 	hw->fiq_inuse = 0;
 	if (s3c24xx_spi_usefiq(hw) && t->len >= 3)
 		s3c24xx_spi_tryfiq(hw);
-
+	//for(i=0;i<hw->len;i++)
+	//printk("%02x ",hw->tx[i]);
+	//printk("==>\n");
 	/* send the first byte */
-	writeb(hw_txbyte(hw, 0), hw->regs + S3C2410_SPTDAT);
+	for (i = 0; i < hw->len; i=i+2) 
+	{
+		spi_write8(hw,hw_txbyte(hw,i+1));
+		spi_write8(hw,hw_txbyte(hw,i));
+		udelay(2);
+    }
 
-	wait_for_completion(&hw->done);
+	if ((hw->len % 4) != 0) {
+		spi_write8(hw,0);
+		spi_write8(hw,0);
+		udelay(2);
+	}
+	hw->count = hw->len;
+	//writeb(hw_txbyte(hw, 0), hw->regs + S3C2410_SPTDAT);
+
+	//wait_for_completion(&hw->done);
 	return hw->count;
 }
 
@@ -593,11 +640,11 @@ static int __init s3c24xx_spi_probe(struct platform_device *pdev)
 		goto err_no_irq;
 	}
 
-	err = request_irq(hw->irq, s3c24xx_spi_irq, 0, pdev->name, hw);
-	if (err) {
-		dev_err(&pdev->dev, "Cannot claim IRQ\n");
-		goto err_no_irq;
-	}
+	//err = request_irq(hw->irq, s3c24xx_spi_irq, 0, pdev->name, hw);
+	//if (err) {
+	//	dev_err(&pdev->dev, "Cannot claim IRQ\n");
+	//	goto err_no_irq;
+	//}
 
 	hw->clk = clk_get(&pdev->dev, "spi");
 	if (IS_ERR(hw->clk)) {

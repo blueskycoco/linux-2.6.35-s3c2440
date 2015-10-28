@@ -106,7 +106,7 @@ static void spu_transaction_finish(struct if_spi_card *card)
  * using a series of 16-bit transfers. */
 static int spu_write(struct if_spi_card *card, u16 reg, const u8 *buf, int len)
 {
-	int err = 0;
+	int err = 0,i;
 	__le16 reg_out = cpu_to_le16(reg | IF_SPI_WRITE_OPERATION_MASK);
 	struct spi_message m;
 	struct spi_transfer reg_trans;
@@ -128,7 +128,10 @@ static int spu_write(struct if_spi_card *card, u16 reg, const u8 *buf, int len)
 
 	data_trans.tx_buf = buf;
 	data_trans.len = len;
-
+	//for(i=0;i<sizeof(reg_out);i++)
+	printk("reg %04x \n",reg | IF_SPI_WRITE_OPERATION_MASK);
+	for(i=0;i<len;i++)
+		printk("data %02x \n",buf[i]);
 	spi_message_add_tail(&reg_trans, &m);
 	spi_message_add_tail(&data_trans, &m);
 
