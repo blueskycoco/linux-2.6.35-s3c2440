@@ -21,7 +21,11 @@
 #include <linux/init.h>
 #include <linux/serial_core.h>
 #include <linux/platform_device.h>
+#include <linux/gpio.h>
+#include <linux/input.h>
 #include <linux/io.h>
+#include <linux/mmc/host.h>
+#include <plat/mci.h>
 
 #include <asm/mach/arch.h>
 #include <asm/mach/map.h>
@@ -39,6 +43,8 @@
 #include <mach/fb.h>
 #include <plat/iic.h>
 
+#include <plat/gpio-cfg.h>
+#include <mach/regs-gpio.h>
 #include <plat/s3c2410.h>
 #include <plat/s3c244x.h>
 #include <plat/clock.h>
@@ -46,7 +52,9 @@
 #include <plat/cpu.h>
 #include <net/smdk2410.h>
 #include <plat/common-smdk.h>
-
+#include <linux/spi/spi.h>
+#include <linux/spi/libertas_spi.h>
+#include <mach/spi.h>
 static struct map_desc smdk2440_iodesc[] __initdata = {
 	/* ISA IO Space map (memory space selected by A24) */
 
@@ -154,12 +162,85 @@ static struct s3c2410fb_mach_info smdk2440_fb_info __initdata = {
 	.lpcsel		= ((0xCE6) & ~7) | 1<<4,
 };
 
+/* MMC/SD  */
+
+static struct s3c24xx_mci_pdata mini2440_mmc_cfg __initdata = {
+   .gpio_detect   = S3C2410_GPG(8),
+   .gpio_wprotect = S3C2410_GPH(8),
+   .set_power     = NULL,
+   .ocr_avail     = MMC_VDD_32_33|MMC_VDD_33_34,
+};
+/* WiFi */
+static int z2_lbs_spi_setup(struct spi_device *spi)
+{
+	int ret = 0;
+	//s3c24xx_spi_gpiocfg_bus0_gpe11_12_13(spi,true);
+		s3c_gpio_cfgpin(S3C2410_GPG(7), S3C2410_GPG7_SPICLK1);
+		s3c_gpio_cfgpin(S3C2410_GPG(6), S3C2410_GPG6_SPIMOSI1);
+		s3c_gpio_cfgpin(S3C2410_GPG(5), S3C2410_GPG5_SPIMISO1);
+		s3c2410_gpio_pullup(S3C2410_GPG(5), 0);
+		s3c2410_gpio_pullup(S3C2410_GPG(6), 0);
+	//s3c_gpio_cfgpin(S3C2410_GPE(13), S3C2410_GPE13_SPICLK0);
+	//s3c_gpio_cfgpin(S3C2410_GPE(12), S3C2410_GPE12_SPIMOSI0);
+	//s3c_gpio_cfgpin(S3C2410_GPE(11), S3C2410_GPE11_SPIMISO0);
+	//s3c2410_gpio_pullup(S3C2410_GPE(11), 0);
+	//s3c2410_gpio_pullup(S3C2410_GPE(13), 0);
+	//s3c2410_gpio_pullup(S3C2410_GPE(12), 0);
+	spi->bits_per_word = 16;
+	spi->mode = SPI_MODE_1;
+
+	spi_setup(spi);
+
+	return ret;
+};
+
+static int z2_lbs_spi_teardown(struct spi_device *spi)
+{
+	return 0;
+
+};
+
+static struct s3c2410_spi_info z2_lbs_chip_info = {
+	.num_cs		= 1,
+	.bus_num	= 1,
+	.pin_cs	= S3C2410_GPG(3),
+	.use_fiq = 0,
+	.gpio_setup = s3c24xx_spi_gpiocfg_bus1_gpg5_6_7,//s3c24xx_spi_gpiocfg_bus0_gpe11_12_13,
+};
+
+static struct libertas_spi_platform_data z2_lbs_pdata = {
+	.use_dummy_writes	= 1,
+	.setup			= z2_lbs_spi_setup,
+	.teardown		= z2_lbs_spi_teardown,
+};
+
+static struct spi_board_info spi_board_info[] __initdata = {
+{
+	.modalias		= "libertas_spi",
+	.platform_data		= &z2_lbs_pdata,
+	.controller_data	= &z2_lbs_chip_info,
+	.irq			= IRQ_EINT1,
+	.max_speed_hz		= 3000000,
+	.bus_num		= 1,
+	.chip_select		= 0,
+	//.mode			= SPI_CPHA|SPI_CPOL,
+},
+};
+
+static void __init z2_spi_init(void)
+{
+	s3c_device_spi1.dev.platform_data= &z2_lbs_chip_info;
+	spi_register_board_info(spi_board_info, ARRAY_SIZE(spi_board_info));
+}
 static struct platform_device *smdk2440_devices[] __initdata = {
 	&s3c_device_ohci,
 	&s3c_device_lcd,
 	&s3c_device_wdt,
 	&s3c_device_i2c0,
 	&s3c_device_iis,
+	&s3c_device_rtc,
+	&s3c_device_sdi,
+	&s3c_device_spi1,
 };
 
 static void __init smdk2440_map_io(void)
@@ -173,7 +254,9 @@ static void __init smdk2440_machine_init(void)
 {
 	s3c24xx_fb_set_platdata(&smdk2440_fb_info);
 	s3c_i2c0_set_platdata(NULL);
+	s3c24xx_mci_set_platdata(&mini2440_mmc_cfg);
 
+	z2_spi_init();
 	platform_add_devices(smdk2440_devices, ARRAY_SIZE(smdk2440_devices));
 	smdk_machine_init();
 }

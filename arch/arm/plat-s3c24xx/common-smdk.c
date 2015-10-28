@@ -127,12 +127,12 @@ static struct mtd_partition smdk_default_nand_part[] = {
 	[3] = {
 		.name	= "rootfs.yaffs2",
 		.offset	= 0x2f0000,
-		.size	= 0x1e00000,
+		.size	= 0x2c00000,
 	},
 	[4] = {
 		.name	= "user store",
-		.offset = 0x20f0000,
-		.size	= 0x1f10000,
+		.offset = 0x2ef0000,
+		.size	= 0x1110000,
 	}
 };
 
@@ -170,6 +170,8 @@ static struct platform_device __initdata *smdk_devs[] = {
 void __init smdk_machine_init(void)
 {
 	/* Configure the LEDs (even if we have no LED support)*/
+	s3c_gpio_cfgpin(S3C2410_GPG(8), S3C2410_GPIO_INPUT);
+	s3c_gpio_cfgpin(S3C2410_GPH(8), S3C2410_GPIO_INPUT);
 
 	s3c_gpio_cfgpin(S3C2410_GPF(4), S3C2410_GPIO_OUTPUT);
 	s3c_gpio_cfgpin(S3C2410_GPF(5), S3C2410_GPIO_OUTPUT);

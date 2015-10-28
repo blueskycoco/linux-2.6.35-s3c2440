@@ -267,7 +267,7 @@ static int s3c_rtc_setalarm(struct device *dev, struct rtc_wkalrm *alrm)
 	struct rtc_time *tm = &alrm->time;
 	void __iomem *base = s3c_rtc_base;
 	unsigned int alrm_en;
-
+	static int flag=0;
 	pr_debug("s3c_rtc_setalarm: %d, %02x/%02x/%02x %02x.%02x.%02x\n",
 		 alrm->enabled,
 		 tm->tm_mday & 0xff, tm->tm_mon & 0xff, tm->tm_year & 0xff,
@@ -292,16 +292,28 @@ static int s3c_rtc_setalarm(struct device *dev, struct rtc_wkalrm *alrm)
 		writeb(bin2bcd(tm->tm_hour), base + S3C2410_ALMHOUR);
 	}
 
-	pr_debug("setting S3C2410_RTCALM to %08x\n", alrm_en);
+	pr_debug("setting S3C2410_RTCALM to %08x enabled %08x\n", alrm_en,alrm->enabled);
 
 	writeb(alrm_en, base + S3C2410_RTCALM);
 
 	s3c_rtc_setaie(alrm->enabled);
 
 	if (alrm->enabled)
-		enable_irq_wake(s3c_rtc_alarmno);
+	{
+		if(flag==0)
+		{
+			enable_irq_wake(s3c_rtc_alarmno);
+			flag=1;
+		}
+	}
 	else
-		disable_irq_wake(s3c_rtc_alarmno);
+	{
+		if(flag==1)
+		{
+			disable_irq_wake(s3c_rtc_alarmno);
+			flag=0;
+		}
+	}
 
 	return 0;
 }
